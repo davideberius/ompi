@@ -59,7 +59,7 @@ OMPI_DECLSPEC ompi_event_t *events = NULL;
  * ################# Begin MPI_T Functions ######################
  * ##############################################################
  */
-
+#if 0
 static int ompi_sw_event_notify(mca_base_pvar_t *pvar, mca_base_pvar_event_t event, void *obj_handle, int *count)
 {
     (void)obj_handle;
@@ -83,8 +83,10 @@ static int ompi_sw_event_get_send(const struct mca_base_pvar_t *pvar, void *valu
     long long *counter_value = (long long*)value;
     *counter_value = ompi_sw_event_get_counter(OMPI_SEND);
 
-    return OPAL_SUCCESS;
+    return OMPI_SUCCESS;
 }
+
+#endif
 
 /* ##############################################################
  * ############ Begin PAPI software_events Code #################
@@ -98,8 +100,7 @@ int iter_start()
 
     if(events == NULL){
         events = (ompi_event_t*)malloc(OMPI_NUM_COUNTERS * sizeof(ompi_event_t));
-    }
-    else{
+    } else {
         fprintf(stderr, "The events data structure has already been allocated.\n");
     }
 
@@ -226,7 +227,7 @@ void ompi_sde_init() {
 
     /* Required registration of counters and optional counter descriptions */
     for(i = 0; i < OMPI_NUM_COUNTERS; i++){
-        printf("Registering: %s (%d of %d)\n", counter_names[i], i, OMPI_NUM_COUNTERS);
+        //printf("Registering: %s (%d of %d)\n", counter_names[i], i, OMPI_NUM_COUNTERS);
         papi_sde_register_counter(sde_handle, counter_names[i], &(events[i].value) );
         papi_sde_describe_counter(sde_handle, counter_names[i], counter_descriptions[i]);
     }
@@ -349,13 +350,13 @@ void ompi_sw_event_init()
     for(i = 0; i < OMPI_NUM_COUNTERS; i++){
         attached_event[i] = 1;
     }
-
-    (void)mca_base_pvar_register("ompi", "opal", "software_events", counter_names[OMPI_SEND], counter_descriptions[OMPI_SEND],
+    /*
+    (void)mca_base_pvar_register("ompi", "runtime", "software_events", counter_names[OMPI_SEND], counter_descriptions[OMPI_SEND],
                                  OPAL_INFO_LVL_4, MPI_T_PVAR_CLASS_SIZE,
                                  MCA_BASE_VAR_TYPE_UNSIGNED_LONG_LONG, NULL, MPI_T_BIND_NO_OBJECT,
                                  MCA_BASE_PVAR_FLAG_READONLY | MCA_BASE_PVAR_FLAG_CONTINUOUS,
                                  ompi_sw_event_get_send, NULL, ompi_sw_event_notify, NULL);
-
+    */
     /* For initializing the PAPI sde component environment */
     ompi_sde_init();
 }
