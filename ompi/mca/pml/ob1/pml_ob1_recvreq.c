@@ -199,7 +199,10 @@ static void mca_pml_ob1_put_completion (mca_pml_ob1_rdma_frag_t *frag, int64_t r
     if (OPAL_LIKELY(0 < rdma_size)) {
 
         /* check completion status */
+
         OPAL_THREAD_ADD_FETCH_SIZE_T(&recvreq->req_bytes_received, rdma_size);
+        SW_EVENT_USER_OR_MPI(recvreq->req_recv.req_base.req_tag, (long long)rdma_size, OMPI_BYTES_RECEIVED_USER, OMPI_BYTES_RECEIVED_MPI);
+
         if (recv_request_pml_complete_check(recvreq) == false &&
             recvreq->req_rdma_offset < recvreq->req_send_offset) {
             /* schedule additional rdma operations */
@@ -377,6 +380,7 @@ static void mca_pml_ob1_rget_completion (mca_btl_base_module_t* btl, struct mca_
     } else {
         /* is receive request complete */
         OPAL_THREAD_ADD_FETCH_SIZE_T(&recvreq->req_bytes_received, frag->rdma_length);
+        SW_EVENT_USER_OR_MPI(recvreq->req_recv.req_base.req_tag, (long long)frag->rdma_length, OMPI_BYTES_RECEIVED_USER, OMPI_BYTES_RECEIVED_MPI);
         /* TODO: re-add order */
         mca_pml_ob1_send_fin (recvreq->req_recv.req_base.req_proc,
                               bml_btl, frag->rdma_hdr.hdr_rget.hdr_frag,
@@ -536,7 +540,6 @@ void mca_pml_ob1_recv_request_progress_frag( mca_pml_ob1_recv_request_t* recvreq
                );
 
     OPAL_THREAD_ADD_FETCH_SIZE_T(&recvreq->req_bytes_received, bytes_received);
-
     SW_EVENT_USER_OR_MPI(recvreq->req_recv.req_base.req_tag, (long long)bytes_received, OMPI_BYTES_RECEIVED_USER, OMPI_BYTES_RECEIVED_MPI);
 
     /* check completion status */
@@ -616,6 +619,7 @@ void mca_pml_ob1_recv_request_frag_copy_finished( mca_btl_base_module_t* btl,
     des->des_cbfunc(NULL, NULL, des, 0);
 
     OPAL_THREAD_ADD_FETCH_SIZE_T(&recvreq->req_bytes_received, bytes_received);
+    SW_EVENT_USER_OR_MPI(recvreq->req_recv.req_base.req_tag, (long long)bytes_received, OMPI_BYTES_RECEIVED_USER, OMPI_BYTES_RECEIVED_MPI);
 
     /* check completion status */
     if(recv_request_pml_complete_check(recvreq) == false &&
@@ -830,6 +834,7 @@ void mca_pml_ob1_recv_request_progress_rndv( mca_pml_ob1_recv_request_t* recvreq
                                    recvreq->req_recv.req_base.req_datatype);
                    );
         OPAL_THREAD_ADD_FETCH_SIZE_T(&recvreq->req_bytes_received, bytes_received);
+        SW_EVENT_USER_OR_MPI(recvreq->req_recv.req_base.req_tag, (long long)bytes_received, OMPI_BYTES_RECEIVED_USER, OMPI_BYTES_RECEIVED_MPI);
     }
     /* check completion status */
     if(recv_request_pml_complete_check(recvreq) == false &&

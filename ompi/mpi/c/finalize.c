@@ -41,7 +41,6 @@ int MPI_Finalize(void)
     int i, j, rank, world_size, offset;
     long long *recv_buffer, *send_buffer;
     char *filename;
-    FILE *fptr;
 
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
@@ -64,26 +63,19 @@ int MPI_Finalize(void)
 
     if(rank == 0){
         asprintf(&filename, "sw_events_output_XXXXXX");
-        filename = mktemp(filename);
-        fptr = fopen(filename, "w+");
-
-        fprintf(fptr, "%d %d\n", world_size, OMPI_NUM_COUNTERS);
 
         fprintf(stdout, "OMPI Software Counters:\n");
         offset = 0;
         for(j = 0; j < world_size; j++){
             fprintf(stdout, "World Rank %d:\n", j);
-            fprintf(fptr, "%d\n", j);
             for(i = 0; i < OMPI_NUM_COUNTERS; i++){
                 fprintf(stdout, "%s -> %lld\n", events[i].name, recv_buffer[offset+i]);
-                fprintf(fptr, "%s %lld\n", events[i].name, recv_buffer[offset+i]);
             }
             fprintf(stdout, "\n");
             offset += OMPI_NUM_COUNTERS;
         }
         free(recv_buffer);
         free(send_buffer);
-        fclose(fptr);
     }
     else{
         free(send_buffer);
