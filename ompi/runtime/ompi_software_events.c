@@ -23,8 +23,7 @@ OMPI_DECLSPEC const char *counter_names[OMPI_NUM_COUNTERS] = {
     "OMPI_UNEXPECTED",
     "OMPI_OUT_OF_SEQUENCE",
     "OMPI_MATCH_TIME",
-    "OMPI_OOS_MATCH_TIME",
-    "OMPI_PROGRESS_SWITCH"
+    "OMPI_OOS_MATCH_TIME"
 };
 
 OMPI_DECLSPEC const char *counter_descriptions[OMPI_NUM_COUNTERS] = {
@@ -48,8 +47,7 @@ OMPI_DECLSPEC const char *counter_descriptions[OMPI_NUM_COUNTERS] = {
     "The number of messages that arrived as unexpected messages.",
     "The number of messages that arrived out of the proper sequence.",
     "The number of microseconds spent matching unexpected messages.",
-    "The number of microseconds spent matching out of sequence messages.",
-    "The number of times the progress thread changed."
+    "The number of microseconds spent matching out of sequence messages."
 };
 
 /* An array of integer values to denote whether an event is activated (1) or not (0) */
@@ -381,29 +379,31 @@ void ompi_sw_event_fini()
 void ompi_sw_event_record(unsigned int event_id, long long value)
 {
     if(OPAL_UNLIKELY(attached_event[event_id] == 1)){
-        OPAL_THREAD_ADD64(&events[event_id].value, value);
+        OPAL_THREAD_ADD64(&(events[event_id].value), value);
     }
 }
 
-/* Starts microsecond-precision timer and stores the start value in usec */
-void ompi_sw_event_timer_start(unsigned int event_id, opal_timer_t *usec)
+/* Starts cycle-precision timer and stores the start value in 'cycles' */
+void ompi_sw_event_timer_start(unsigned int event_id, opal_timer_t *cycles)
 {
-    /* Check whether usec == 0.0 to make sure the timer hasn't started yet */
-    if(OPAL_UNLIKELY(attached_event[event_id] == 1 && *usec == 0)){
+    /* Check whether cycles == 0.0 to make sure the timer hasn't started yet */
+    if(OPAL_UNLIKELY(attached_event[event_id] == 1 && *cycles == 0)){
         //*usec = opal_timer_base_get_cycles();
-        *usec = opal_timer_base_get_usec();
+        //*usec = opal_timer_base_get_usec();
+        *cycles = opal_timer_base_get_cycles();
     }
 }
 
-/* Stops a microsecond-precision timer and calculates the total elapsed time
- * based on the starting time in usec and putting the result in usec.
+/* Stops a cycle-precision timer and calculates the total elapsed time
+ * based on the starting time in 'cycles' and putting the result in 'cycles'.
  */
-void ompi_sw_event_timer_stop(unsigned int event_id, opal_timer_t *usec)
+void ompi_sw_event_timer_stop(unsigned int event_id, opal_timer_t *cycles)
 {
     if(OPAL_UNLIKELY(attached_event[event_id] == 1)){
         //*usec = (opal_timer_base_get_cycles() - *usec) / sys_clock_freq_mhz;
-        *usec = opal_timer_base_get_usec() - *usec;
-        OPAL_THREAD_ADD64(&events[event_id].value, (long long)*usec);
+        //*usec = opal_timer_base_get_usec() - *usec;
+        *cycles = opal_timer_base_get_cycles() - *cycles;
+        OPAL_THREAD_ADD64(&events[event_id].value, (long long)*cycles);
     }
 }
 

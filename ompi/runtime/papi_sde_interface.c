@@ -10,7 +10,7 @@ OMPI_DECLSPEC papi_handle_t
 __attribute__((weak)) 
 papi_sde_init(char *name_of_library, int *event_count)
 {
-    printf("weak papi_sde_init called from %s\n", __FILE__);
+    printf("Weak papi_sde_init called from %s.  Weak functions will be called papi sde functionality.  If you aren't using the papi sde component, disregard this message.\n", __FILE__);
     void * ptr = NULL;
     return ptr;
 }
@@ -19,12 +19,12 @@ OMPI_DECLSPEC void
 __attribute__((weak)) 
 papi_sde_register_counter(papi_handle_t handle, char *event_name, long long int *counter)
 {
-    printf("weak papi_sde_register_counter called from %s\n", __FILE__);
+    /*printf("weak papi_sde_register_counter called from %s\n", __FILE__);*/
 }
 
 OMPI_DECLSPEC void 
 __attribute__((weak)) 
 papi_sde_describe_counter(papi_handle_t handle, char *event_name, char *event_description)
 {
-    printf("weak papi_sde_describe_counter called from %s\n", __FILE__);
+    /*printf("weak papi_sde_describe_counter called from %s\n", __FILE__);*/
 }
