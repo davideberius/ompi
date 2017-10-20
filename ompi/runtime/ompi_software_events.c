@@ -214,6 +214,7 @@ struct PAPI_SOFTWARE_EVENT_S papi_software_events = {"ompi", {0, 0, 0}, iter_sta
  * ##############################################################
  */
 
+#if 0
 /* An initialization function for the PAPI sde component.
  * This creates an sde handle with the name OMPI and registers all events and
  * event descriptions with the sde component.
@@ -321,6 +322,7 @@ void* papi_sde_hook_list_events(void)
     printf("done papi_sde_hook_list_events %s %d\n", __FILE__, __LINE__);
     return sde_handle;
 }
+#endif
 
 /* ##############################################################
  * ############### End of PAPI sde Code #########################
@@ -366,7 +368,7 @@ void ompi_sw_event_init()
                                  ompi_sw_event_get_send, NULL, ompi_sw_event_notify, NULL);
     */
     /* For initializing the PAPI sde component environment */
-    ompi_sde_init();
+    //ompi_sde_init();
 }
 
 /* Calls iter_release to free all of the OMPI software events data structures */
