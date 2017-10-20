@@ -315,9 +315,16 @@ check_cantmatch_for_match(mca_pml_ob1_comm_proc_t *proc)
 {
     mca_pml_ob1_recv_frag_t *frag = proc->frags_cant_match;
 
+#if SOFTWARE_EVENTS_ENABLE == 1
+    opal_timer_t timer = 0;
+#endif
+    SW_EVENT_TIMER_START(OMPI_OOS_MATCH_TIME, &timer);
     if( (NULL != frag) && (frag->hdr.hdr_match.hdr_seq == proc->expected_sequence) ) {
-        return remove_head_from_ordered_list(&proc->frags_cant_match);
+        mca_pml_ob1_recv_frag_t* ret = remove_head_from_ordered_list(&proc->frags_cant_match);
+        SW_EVENT_TIMER_STOP(OMPI_OOS_MATCH_TIME, &timer);
+        return ret;
     }
+    SW_EVENT_TIMER_STOP(OMPI_OOS_MATCH_TIME, &timer);
     return NULL;
 }
 
@@ -389,6 +396,7 @@ void mca_pml_ob1_recv_frag_callback_match(mca_btl_base_module_t* btl,
             MCA_PML_OB1_RECV_FRAG_ALLOC(frag);
             MCA_PML_OB1_RECV_FRAG_INIT(frag, hdr, segments, num_segments, btl);
             append_frag_to_ordered_list(&proc->frags_cant_match, frag, proc->expected_sequence);
+            SW_EVENT_RECORD(OMPI_OUT_OF_SEQUENCE, 1);
             OB1_MATCHING_UNLOCK(&comm->matching_lock);
             return;
         }
@@ -781,10 +789,10 @@ match_one(mca_btl_base_module_t *btl,
           mca_pml_ob1_comm_proc_t *proc,
           mca_pml_ob1_recv_frag_t* frag)
 {
-#ifdef SOFTWARE_EVENTS_ENABLE
-    opal_timer_t usecs = 0;
+#if SOFTWARE_EVENTS_ENABLE == 1
+    opal_timer_t timer = 0;
 #endif
-    SW_EVENT_TIMER_START(OMPI_MATCH_TIME, &usecs);
+    SW_EVENT_TIMER_START(OMPI_MATCH_TIME, &timer);
 
     mca_pml_ob1_recv_request_t *match;
     mca_pml_ob1_comm_t *comm = (mca_pml_ob1_comm_t *)comm_ptr->c_pml_comm;
@@ -823,14 +831,14 @@ match_one(mca_btl_base_module_t *btl,
                                                        num_segments);
                 /* this frag is already processed, so we want to break out
                    of the loop and not end up back on the unexpected queue. */
-                SW_EVENT_TIMER_STOP(OMPI_MATCH_TIME, &usecs);
+                SW_EVENT_TIMER_STOP(OMPI_MATCH_TIME, &timer);
 
                 return NULL;
             }
 
             PERUSE_TRACE_COMM_EVENT(PERUSE_COMM_MSG_MATCH_POSTED_REQ,
                                     &(match->req_recv.req_base), PERUSE_RECV);
-            SW_EVENT_TIMER_STOP(OMPI_MATCH_TIME, &usecs);
+            SW_EVENT_TIMER_STOP(OMPI_MATCH_TIME, &timer);
 
             return match;
         }
@@ -843,7 +851,7 @@ match_one(mca_btl_base_module_t *btl,
 
         PERUSE_TRACE_MSG_EVENT(PERUSE_COMM_MSG_INSERT_IN_UNEX_Q, comm_ptr,
                                hdr->hdr_src, hdr->hdr_tag, PERUSE_RECV);
-        SW_EVENT_TIMER_STOP(OMPI_MATCH_TIME, &usecs);
+        SW_EVENT_TIMER_STOP(OMPI_MATCH_TIME, &timer);
 
         return NULL;
     } while(true);

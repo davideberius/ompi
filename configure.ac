@@ -287,6 +287,24 @@ AS_IF([test "$enable_oshmem" != "no"], [project_oshmem_amc=true], [project_oshme
 m4_ifndef([project_oshmem], [project_oshmem_amc=false])
 AM_CONDITIONAL([PROJECT_OSHMEM], [test "$project_oshmem_amc" = "true"])
 
+# Enable/Disable Software-Based Performance Counters Capability
+AC_ARG_ENABLE(spc,
+    AC_HELP_STRING([--enable-spc],
+                   [Enable software-based performance counters capability (default: disabled)]))
+if test "$enable_spc" = "yes"; then
+    AC_MSG_RESULT([yes])
+    SOFTWARE_EVENTS_ENABLE=1
+else
+    AC_MSG_RESULT([no])
+    SOFTWARE_EVENTS_ENABLE=0
+fi
+AC_DEFINE_UNQUOTED([SOFTWARE_EVENTS_ENABLE],
+                   [$SOFTWARE_EVENTS_ENABLE],
+                   [If the software-based performance counters capability should be enabled.])
+AM_CONDITIONAL(SOFTWARE_EVENTS_ENABLE, test "$SOFTWARE_EVENTS_ENABLE" = "1")
+
+AS_IF([test "$enable_spc" != "no"], [project_spc_amc=true], [project_spc_amc=false])
+
 if test "$enable_binaries" = "no" && test "$enable_dist" = "yes"; then
     AC_MSG_WARN([--disable-binaries is incompatible with --enable dist])
     AC_MSG_ERROR([Cannot continue])

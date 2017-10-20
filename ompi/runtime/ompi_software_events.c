@@ -2,6 +2,10 @@
 
 opal_timer_t sys_clock_freq_mhz = 0;
 
+/* Array for converting from SPC indices to MPI_T indices */
+OMPI_DECLSPEC int mpi_t_indices[OMPI_NUM_COUNTERS] = {0};
+
+/* Array of names for each counter.  Used for MPI_T and PAPI sde initialization */
 OMPI_DECLSPEC const char *counter_names[OMPI_NUM_COUNTERS] = {
     "OMPI_SEND",
     "OMPI_RECV",
@@ -26,6 +30,7 @@ OMPI_DECLSPEC const char *counter_names[OMPI_NUM_COUNTERS] = {
     "OMPI_OOS_MATCH_TIME"
 };
 
+/* Array of descriptions for each counter.  Used for MPI_T and PAPI sde initialization */
 OMPI_DECLSPEC const char *counter_descriptions[OMPI_NUM_COUNTERS] = {
     "The number of times MPI_Send was called.",
     "The number of times MPI_Recv was called.",
@@ -62,348 +67,184 @@ OMPI_DECLSPEC ompi_event_t *events = NULL;
 static int ompi_sw_event_notify(mca_base_pvar_t *pvar, mca_base_pvar_event_t event, void *obj_handle, int *count)
 {
     (void)obj_handle;
+
+    int i;
+
+    /* For this event, we need to set count to the number of long long type
+     * values for this counter.  All SPC counters are one long long, so we
+     * always set count to 1.
+     */
     if(MCA_BASE_PVAR_HANDLE_BIND == event)
         *count = 1;
- 
-    return MPI_SUCCESS;
-}
-
-inline long long ompi_sw_event_get_counter(int counter_id)
-{
-    if(events != NULL)
-        return events[counter_id].value;
-    else
-        return 0; /* -1 would be preferred to indicate lack of initialization, but the type needs to be unsigned */
-}
-
-static int ompi_sw_event_get_send(const struct mca_base_pvar_t *pvar, void *value, void *obj_handle)
-{   
-    (void) obj_handle;
-    long long *counter_value = (long long*)value;
-    *counter_value = ompi_sw_event_get_counter(OMPI_SEND);
+    /* For this event, we need to turn on the counter */
+    else if(MCA_BASE_PVAR_HANDLE_START == event){
+        /* Loop over the mpi_t_inddices array and find the correct SPC index to turn on */
+        for(i = 0; i < OMPI_NUM_COUNTERS; i++){
+            if(pvar->pvar_index == mpi_t_indices[i]){
+                attached_event[i] = 1;
+                break;
+            }
+        }
+    }
+    /* For this event, we need to turn off the counter */
+    else if(MCA_BASE_PVAR_HANDLE_STOP == event){
+        /* Loop over the mpi_t_inddices array and find the correct SPC index to turn off */
+        for(i = 0; i < OMPI_NUM_COUNTERS; i++){
+            if(pvar->pvar_index == mpi_t_indices[i]){
+                attached_event[i] = 0;
+                break;
+            }
+        }
+    }
 
     return MPI_SUCCESS;
 }
 
 /* ##############################################################
- * ############ Begin PAPI software_events Code #################
+ * ################# Begin SPC Functions ########################
  * ##############################################################
  */
 
-/* Allocates and initializes the events data structure */
-int iter_start()
+/* This function returns the current count of an SPC counter that has been retistered
+ * as an MPI_T pvar.  The MPI_T index is not necessarily the same as the SPC index,
+ * so we need to convert from MPI_T index to SPC index and then set the 'value' argument
+ * to the correct value for this pvar.
+ */
+static int ompi_sw_event_get_count(const struct mca_base_pvar_t *pvar, void *value, void *obj_handle)
+{   
+    (void) obj_handle;
+
+    int i;
+    long long *counter_value = (long long*)value;
+
+    for(i = 0; i < OMPI_NUM_COUNTERS; i++){
+        if(pvar->pvar_index == mpi_t_indices[i]){
+            /* If this is a timer-based counter, we need to convert from cycles to microseconds */
+            if(i == OMPI_MATCH_TIME || i == OMPI_OOS_MATCH_TIME)
+                *counter_value = events[i].value / sys_clock_freq_mhz;
+            else
+                *counter_value = events[i].value;
+            return MPI_SUCCESS;
+        }
+    }
+    /* If all else fails, simply set value to 0 */
+    *counter_value = 0;
+    return MPI_SUCCESS;
+}
+
+/* Initializes the events data structure and allocates memory for it if needed. */
+void events_init()
 {
     int i;
 
+    /* If the events data structure hasn't been allocated yet, allocate memory for it */
     if(events == NULL){
         events = (ompi_event_t*)malloc(OMPI_NUM_COUNTERS * sizeof(ompi_event_t));
-    } else {
-        fprintf(stderr, "The events data structure has already been allocated.\n");
     }
-
+    /* The data structure has been allocated, so we simply initialize all of the counters
+     * with their names and an initial count of 0.
+     */
     for(i = 0; i < OMPI_NUM_COUNTERS; i++){
         events[i].name = counter_names[i];
         events[i].value = 0;
     }
-    return 0;
 }
 
-/* Returns the name of the next event in the data structure */
-char* iter_next()
-{
-    static int i = 0;
-
-    if(i < OMPI_NUM_COUNTERS){
-        i++;
-        return events[i-1].name;
-    }
-    else{
-        /* Finished iterating through the list.  Return NULL and reset i */
-        i = 0;
-        return NULL;
-    }
-}
-
-/* Frees the events data structure */
-int iter_release()
-{
-    free(events);
-    return 0;
-}
-
-/* If an event named 'event_name' exists, attach the corresponding event's value
- * to the supplied long long pointer.
- */
-int attach_event(char *event_name, long long **value)
-{
-    int i;
-
-    if(events == NULL){
-        fprintf(stderr, "Error: The iterator hasn't been started.  The event cannot be attached.\n");
-        return -1;
-    }
-
-    if(event_name == NULL){
-        fprintf(stderr, "Error: No event name specified for attach_event.\n");
-        return -1;
-    }
-
-    for(i = 0; i < OMPI_NUM_COUNTERS; i++){
-        if(strcmp(event_name, events[i].name) == 0){
-            break;
-        }
-    }
-
-    if(i < OMPI_NUM_COUNTERS){
-        *value = &events[i].value;
-        attached_event[i] = 1;
-
-        return 0;
-    }
-    else{
-        fprintf(stderr, "Error: Could not find an event by that name.  The event cannot be attached.\n");
-        return -1;
-    }
-}
-
-/* If an event with the name 'event_name' exists, reset its value to 0
- * and set the corresponding value in attached_event to 0.
- */
-int detach_event(char *event_name)
-{
-    int i;
-
-    if(events == NULL){
-        fprintf(stderr, "Error: The iterator hasn't been started.  The event cannot be detached.\n");
-        return -1;
-    }
-
-    if(event_name == NULL){
-        fprintf(stderr, "Error: No event name specified for detach_event.\n");
-        return -1;
-    }
-
-    for(i = 0; i < OMPI_NUM_COUNTERS; i++){
-        if(strcmp(event_name, events[i].name) == 0){
-            break;
-        }
-    }
-
-    if(i < OMPI_NUM_COUNTERS){
-        attached_event[i] = 0;
-        events[i].value = 0;
-
-        return 0;
-    }
-    else{
-        fprintf(stderr, "Error: Could not find an event by that name.  The event cannot be detached.\n");
-        return -1;
-    }
-}
-
-/* A structure to expose to the PAPI software_events component to use these events */
-struct PAPI_SOFTWARE_EVENT_S papi_software_events = {"ompi", {0, 0, 0}, iter_start, iter_next, iter_release, attach_event, detach_event};
-
-/* ##############################################################
- * ############ End of PAPI software_events Code ################
- * ##############################################################
- */
-
-/* ##############################################################
- * ############### Begin PAPI sde Code ##########################
- * ##############################################################
- */
-
-/* An initialization function for the PAPI sde component.
- * This creates an sde handle with the name OMPI and registers all events and
- * event descriptions with the sde component.
- */
-void ompi_sde_init() {
-    int i, event_count = OMPI_NUM_COUNTERS;
-    void *sde_handle = (void *)papi_sde_init("OMPI", &event_count);
-
-    /* Required registration of counters and optional counter descriptions */
-    for(i = 0; i < OMPI_NUM_COUNTERS; i++){
-        //printf("Registering: %s (%d of %d)\n", counter_names[i], i, OMPI_NUM_COUNTERS);
-        papi_sde_register_counter(sde_handle, counter_names[i], &(events[i].value) );
-        papi_sde_describe_counter(sde_handle, counter_names[i], counter_descriptions[i]);
-    }
-}
-
-/* Define PAPI_DYNAMIC_SDE since we are assuming PAPI is linked dynamically.
- * Note: In the future we should support both dynamic and static linking of PAPI.
- */
-#define PAPI_DYNAMIC_SDE
-/* This function will be called from papi_native_avail to list all of the OMPI
- * events with their names and descriptions.  In order for the dynamic version
- * to work, the environment variable PAPI_SHARED_LIB must contain the full path
- * to the PAPI shared library like the following:
- * /path/to/papi/install/lib/libpapi.so
- * 
- * This function will use dlsym to get the appropriate functions for initializing
- * the PAPI sde component's environment and register all of the events.
- */
-void* papi_sde_hook_list_events(void)
-{
-    int  i, event_count = OMPI_NUM_COUNTERS;
-    char *error;
-    void   *papi_handle;
-    void*  (*sym_init)(char *name_of_library, int *event_count);
-    void   (*sym_reg)( void *handle, char *event_name, long long *counter);
-    void   (*sym_desc)(void *handle, char *event_name, char *event_description);
-    void   *sde_handle = NULL;
-
-    printf("papi_sde_hook_list_events\n");
-
-#ifdef PAPI_DYNAMIC_SDE
-    printf("PAPI_DYNAMIC_SDE defined\n");
-    fflush(stdout);
-
-    char *path_to_papi = getenv("PAPI_SHARED_LIB");
-    if(path_to_papi == NULL)
-        return NULL;
-
-    printf("path_to_papi = %s\n", path_to_papi);
-
-    papi_handle = dlopen(path_to_papi, RTLD_LOCAL | RTLD_LAZY);
-    if(!papi_handle){
-        fputs(dlerror(), stderr);
-        exit(1);
-    }
-    printf("papi_handle opened\n");
-    fflush(stdout);
-
-    dlerror();
-    sym_init = (void* (*)(char*, int*)) dlsym(papi_handle, "papi_sde_init");
-    if((error = dlerror()) != NULL) {
-        fputs(error, stderr);
-        exit(1);
-    }
-
-    sym_reg = (void (*)(void*, char*, long long int*)) dlsym(papi_handle, "papi_sde_register_counter");
-    if((error = dlerror()) != NULL){
-        fputs(error, stderr);
-        exit(1);
-    }
-
-    sym_desc = (void (*)(void*, char*, char*)) dlsym(papi_handle, "papi_sde_describe_counter");
-    if((error = dlerror()) != NULL){
-        fputs(error, stderr);
-        exit(1);
-    }
-
-    printf("symbols found\n");
-    fflush(stdout);
-
-    sde_handle = (void *) (*sym_init)("OMPI", &event_count);
-    printf("sde_handle opened\n");
-    fflush(stdout);
-    if((error = dlerror()) != NULL){
-        fputs(error, stderr);
-        exit(1);
-    }
-
-    printf("sde_handle preparing to register\n");
-    fflush(stdout);
-
-    /* We need to register the counters so they can be printed in papi_native_avail
-     * Note: sde::: will be prepended to the names
-     */
-    iter_start();
-    for(i = 0; i < OMPI_NUM_COUNTERS; i++){
-        printf("Registering: %s (%d of %d)\n", counter_names[i], i+1, OMPI_NUM_COUNTERS);
-        (*sym_reg)(sde_handle, counter_names[i], &(events[i].value));
-        (*sym_desc)(sde_handle, counter_names[i], counter_descriptions[i]);
-        events[i].value = 0;
-    }
-#endif
-
-    printf("done papi_sde_hook_list_events %s %d\n", __FILE__, __LINE__);
-    return sde_handle;
-}
-
-/* ##############################################################
- * ############### End of PAPI sde Code #########################
- * ##############################################################
- */
-
-/* ##############################################################
- * ############### Begin Utility Functions ######################
- * ##############################################################
- */
-
-/* Initializes the OMPI software events.  The default functionality is to
- * turn all of the counters on.
- * Note: in the future, turning events on and off should be done through
- *       an MCA parameter.
+/* Initializes the SPC data structures and registers all counters as MPI_T pvars.
+ * Turns on only the counters that were specified in the mpi_spc_enable MCA parameter.  
  */
 void ompi_sw_event_init()
 {
-    int i;
-    /*
-#if OPAL_HAVE_SYS_TIMER_GET_CYCLES
-    printf("OPAL_HAVE_SYS_TIMER_GET_CYCLES defined\n");
-#endif
-#if OPAL_HAVE_CLOCK_GETTIME
-    printf("OPAL_HAVE_CLOCK_GETTIME defined\n");
-#endif
+    int i, j, ret, found = 0, all_on = 0;
 
-    printf("Clock Frequency: %d Hz\n", (int)opal_timer_base_get_freq());
-    sys_clock_freq_mhz = 2300;//opal_timer_base_get_freq() / 1000000;
-    printf("Clock Frequency (converted): %d MHz\n", (int)sys_clock_freq_mhz);
-*/
-    iter_start();
+    /* Initialize the clock frequency variable as the CPU's frequency in MHz */
+    sys_clock_freq_mhz = opal_timer_base_get_freq() / 1000000;
 
-    /* Turn all counters on */
-    for(i = 0; i < OMPI_NUM_COUNTERS; i++){
-        attached_event[i] = 1;
+    events_init();
+
+    /* Get the MCA params string of counters to turn on */
+    char **arg_strings = opal_argv_split(ompi_mpi_spc_enable_string, ',');
+    int num_args      = opal_argv_count(arg_strings);
+
+    /* If there is only one argument and it is 'all', then all counters
+     * should be turned on.  If the size is 0, then no counters will be enabled.
+     */
+    if(num_args == 1){
+        if(strcmp(arg_strings[0], "all") == 0)
+            all_on = 1;
     }
-    /*
-    (void)mca_base_pvar_register("ompi", "runtime", "software_events", counter_names[OMPI_SEND], counter_descriptions[OMPI_SEND],
-                                 OPAL_INFO_LVL_4, MPI_T_PVAR_CLASS_SIZE,
-                                 MCA_BASE_VAR_TYPE_UNSIGNED_LONG_LONG, NULL, MPI_T_BIND_NO_OBJECT,
-                                 MCA_BASE_PVAR_FLAG_READONLY | MCA_BASE_PVAR_FLAG_CONTINUOUS,
-                                 ompi_sw_event_get_send, NULL, ompi_sw_event_notify, NULL);
-    */
-    /* For initializing the PAPI sde component environment */
-    ompi_sde_init();
+
+    /* Turn on only the counters that were specified in the MCA parameter */
+    for(i = 0; i < OMPI_NUM_COUNTERS; i++){
+        if(all_on)
+            attached_event[i] = 1;
+        else{
+            /* Note: If no arguments were given, this will be skipped */
+            for(j = 0; j < num_args && found < num_args; j++){
+                if(strcmp(counter_names[i], arg_strings[j]) == 0){
+                    attached_event[i] = 1;
+                    found++;
+                }
+            }
+        }
+
+        /* Registers the current counter as an MPI_T pvar regardless of whether it's been turned on or not */
+        ret = mca_base_pvar_register("ompi", "runtime", "software_events", counter_names[i], counter_descriptions[i],
+                                     OPAL_INFO_LVL_4, MPI_T_PVAR_CLASS_SIZE,
+                                     MCA_BASE_VAR_TYPE_UNSIGNED_LONG_LONG, NULL, MPI_T_BIND_NO_OBJECT,
+                                     MCA_BASE_PVAR_FLAG_READONLY | MCA_BASE_PVAR_FLAG_CONTINUOUS,
+                                     ompi_sw_event_get_count, NULL, ompi_sw_event_notify, NULL);
+        /* Initialize the mpi_t_indices array with the MPI_T indices.
+         * The array index indicates the SPC index, while the value indicates
+         * the MPI_T index.
+         */
+        if(ret != OPAL_ERROR){
+            mpi_t_indices[i] = ret;
+        } else{
+            mpi_t_indices[i] = -1;
+        }
+    }
 }
 
-/* Calls iter_release to free all of the OMPI software events data structures */
+/* Frees any dynamically alocated OMPI software events data structures */
 void ompi_sw_event_fini()
 {
-    iter_release();
+    free(events);
 }
 
 /* Records an update to a counter using an atomic add operation. */
 void ompi_sw_event_record(unsigned int event_id, long long value)
 {
+    /* Denoted unlikely because counters will often be turned off. */
     if(OPAL_UNLIKELY(attached_event[event_id] == 1)){
-        OPAL_THREAD_ADD64(&(events[event_id].value), value);
+        OPAL_THREAD_ADD_FETCH_SIZE_T(&(events[event_id].value), value);
     }
 }
 
-/* Starts cycle-precision timer and stores the start value in 'cycles' */
+/* Starts cycle-precision timer and stores the start value in the 'cycles' argument.
+ * Note: This assumes that the 'cycles' argument is initialized to 0 if the timer
+ *       hasn't been started yet.
+ */
 void ompi_sw_event_timer_start(unsigned int event_id, opal_timer_t *cycles)
 {
-    /* Check whether cycles == 0.0 to make sure the timer hasn't started yet */
+    /* Check whether cycles == 0.0 to make sure the timer hasn't started yet.
+     * This is denoted unlikely because the counters will often be turned off.
+     */
     if(OPAL_UNLIKELY(attached_event[event_id] == 1 && *cycles == 0)){
-        //*usec = opal_timer_base_get_cycles();
-        //*usec = opal_timer_base_get_usec();
         *cycles = opal_timer_base_get_cycles();
     }
 }
 
 /* Stops a cycle-precision timer and calculates the total elapsed time
- * based on the starting time in 'cycles' and putting the result in 'cycles'.
+ * based on the starting time in 'cycles' and stores the result in the
+ * 'cycles' argument.
  */
 void ompi_sw_event_timer_stop(unsigned int event_id, opal_timer_t *cycles)
 {
+    /* This is denoted unlikely because the counters will often be turned off. */
     if(OPAL_UNLIKELY(attached_event[event_id] == 1)){
-        //*usec = (opal_timer_base_get_cycles() - *usec) / sys_clock_freq_mhz;
-        //*usec = opal_timer_base_get_usec() - *usec;
         *cycles = opal_timer_base_get_cycles() - *cycles;
-        OPAL_THREAD_ADD64(&events[event_id].value, (long long)*cycles);
+        OPAL_THREAD_ADD_FETCH_SIZE_T(&events[event_id].value, (long long)*cycles);
     }
 }
 
@@ -418,45 +259,3 @@ void ompi_sw_event_user_or_mpi(int tag, long long value, unsigned int user_enum,
         SW_EVENT_RECORD(mpi_enum, value);
     }
 }
-
-/* A function to output the value of all of the counters.  This is currently
- * implemented in MPI_Finalize, but we need to find a better way for this to
- * happen.
- */
-void ompi_sw_event_print_all()
-{
-    /*int i, j, rank, world_size, offset;
-    long long *recv_buffer, *send_buffer;
-
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-
-    if(rank == 0){
-        send_buffer = (long long*)malloc(OMPI_NUM_COUNTERS * sizeof(long long));
-        recv_buffer = (long long*)malloc(world_size * OMPI_NUM_COUNTERS * sizeof(long long));
-        for(i = 0; i < OMPI_NUM_COUNTERS; i++){
-            send_buffer[i] = events[i].value;
-        }
-        MPI_Gather(send_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, recv_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
-    }
-    else{
-        send_buffer = (long long*)malloc(OMPI_NUM_COUNTERS * sizeof(long long));
-        for(i = 0; i < OMPI_NUM_COUNTERS; i++){
-            send_buffer[i] = events[i].value;
-        }
-        MPI_Gather(send_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, recv_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
-    }
-
-    if(rank == 0){
-        fprintf(stdout, "OMPI Software Counters:\n");
-        offset = 0;
-        for(j = 0; j < world_size; j++){
-            fprintf(stdout, "World Rank %d:\n", j);
-            for(i = 0; i < OMPI_NUM_COUNTERS; i++){
-                fprintf(stdout, "%s\t%lld\n", counter_names[offset+i], events[offset+i].value);
-            }
-            offset += OMPI_NUM_COUNTERS;
-        }
-    }*/
-}
-

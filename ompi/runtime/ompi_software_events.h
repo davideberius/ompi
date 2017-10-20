@@ -8,10 +8,32 @@
 
 #include "ompi/include/mpi.h"
 #include "ompi/include/ompi_config.h"
+#include "ompi/datatype/ompi_datatype.h"
+#include "ompi/runtime/params.h"
 #include "opal/mca/timer/timer.h"
 #include "opal/mca/base/mca_base_pvar.h"
+#include "opal/util/argv.h"
 
 #include MCA_timer_IMPLEMENTATION_HEADER
+
+/* INSTRUCTIONS FOR ADDING COUNTERS
+ * 1.) Add a new counter name in the OMPI_COUNTERS enum before
+ *     OMPI_NUM_COUNTERS below.
+ * 2.) Add corresponding counter name and descriptions to the
+ *     counter_names and counter_descriptions arrays in
+ *     ompi_software_events.c  NOTE: The names and descriptions
+ *     MUST be in the same array location as where you added the
+ *     counter name in step 1.
+ * 3.) If this counter is based on a timer, add its enum name to
+ *     the logic for timer-based counters in the ompi_sw_event_get_count
+ *     function in ompi_software_events.c
+ * 4.) Instrument the Open MPI code base where it makes sense for
+ *     your counter to be modified using the SW_EVENT_RECORD macro.
+ *     Note: If your counter is timer-based you should use the
+ *     SW_EVENT_TIMER_START and SW_EVENT_TIMER_STOP macros to record
+ *     the time in cycles to then be converted to microseconds later
+ *     in the ompi_sw_event_get_count function when requested by MPI_T
+ */
 
 /* This enumeration serves as event ids for the various events */
 enum OMPI_COUNTERS{
@@ -36,7 +58,7 @@ enum OMPI_COUNTERS{
     OMPI_OUT_OF_SEQUENCE,
     OMPI_MATCH_TIME,
     OMPI_OOS_MATCH_TIME,
-    OMPI_NUM_COUNTERS
+    OMPI_NUM_COUNTERS /* This serves as the number of counters.  It must be last. */
 };
 
 /* A structure for storing the event data */
@@ -45,31 +67,13 @@ typedef struct ompi_event_s{
     long long value;
 } ompi_event_t;
 
-/* Structure and helper functions for PAPI software_events component
- * Note: This component is being superceded by the sde component.
- */
-struct PAPI_SOFTWARE_EVENT_S{
-    char  name[32];
-    int   version[3];
-    int   (*iter_start)(void);
-    char* (*iter_next)(void);
-    int   (*iter_release)(void);
-    int   (*attach_event)(char*, long long**);
-    int   (*detach_event)(char*);
-};
-
-int iter_start(void);
-char* iter_next(void);
-int iter_release(void);
-int attach_event(char *name, long long **value);
-int detach_event(char *name);
-
-/* End of PAPI software_events component stuff */
-
 OMPI_DECLSPEC extern unsigned int attached_event[OMPI_NUM_COUNTERS];
 OMPI_DECLSPEC extern ompi_event_t *events;
 
-/* OMPI software event utility functions */
+/* Events data structure initialization function */
+void events_init(void);
+
+/* OMPI software event (SPC) utility functions */
 void ompi_sw_event_init(void);
 void ompi_sw_event_fini(void);
 void ompi_sw_event_record(unsigned int event_id, long long value);
@@ -79,23 +83,13 @@ void ompi_sw_event_user_or_mpi(int tag, long long value, unsigned int user_enum,
 void ompi_sw_event_print_all(void);
 
 /* MPI_T utility functions */
-
 static int ompi_sw_event_notify(mca_base_pvar_t *pvar, mca_base_pvar_event_t event, void *obj_handle, int *count);
 long long ompi_sw_event_get_counter(int counter_id);
-static int ompi_sw_event_get_send(const struct mca_base_pvar_t *pvar, void *value, void *obj_handle);
 
-/* Functions for the PAPI sde component */
-void ompi_sde_init(void);
-/* PAPI sde component interface functions */
-typedef void* papi_handle_t;
-
-/* This should be defined at build time through an MCA parameter */
-#define SOFTWARE_EVENTS_ENABLE
-
-/* Macros for using the utility functions throughout the codebase.
- * If SOFTWARE_EVENTS_ENABLE is not defined, the macros become no-ops.
+/* Macros for using the software event utility functions throughout the codebase.
+ * If SOFTWARE_EVENTS_ENABLE is not 1, the macros become no-ops.
  */
-#ifdef SOFTWARE_EVENTS_ENABLE
+#if SOFTWARE_EVENTS_ENABLE == 1
 
 #define SW_EVENT_INIT()  \
     ompi_sw_event_init()
