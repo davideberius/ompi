@@ -48,8 +48,6 @@ int MPI_Init(int *argc, char ***argv)
     char *env;
     int required = MPI_THREAD_SINGLE;
 
-    SW_EVENT_INIT();
-
     /* check for environment overrides for required thread level.  If
        there is, check to see that it is a valid/supported thread level.
        If not, default to MPI_THREAD_MULTIPLE. */
@@ -85,6 +83,8 @@ int MPI_Init(int *argc, char ***argv)
     }
 
     OPAL_CR_INIT_LIBRARY();
+
+    SW_EVENT_INIT();
 
     return MPI_SUCCESS;
 }

@@ -37,10 +37,12 @@ static const char FUNC_NAME[] = "MPI_Finalize";
 
 int MPI_Finalize(void)
 {
-#ifdef SOFTWARE_EVENTS_ENABLE
+    /* If --with-spc was specified, print all of the final SPC values
+     * aggregated across the whole MPI run.
+     */
+#if SOFTWARE_EVENTS_ENABLE == 1
     int i, j, rank, world_size, offset;
     long long *recv_buffer, *send_buffer;
-    char *filename;
 
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
@@ -62,8 +64,6 @@ int MPI_Finalize(void)
     }
 
     if(rank == 0){
-        asprintf(&filename, "sw_events_output_XXXXXX");
-
         fprintf(stdout, "OMPI Software Counters:\n");
         offset = 0;
         for(j = 0; j < world_size; j++){
@@ -82,10 +82,6 @@ int MPI_Finalize(void)
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
-
-    /*SW_EVENT_PRINT_ALL();*/
-
-    /*SW_EVENT_FINI();*/
 #endif
 
     OPAL_CR_FINALIZE_LIBRARY();

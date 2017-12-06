@@ -540,7 +540,7 @@ match_one(mca_btl_base_module_t *btl,
           mca_pml_ob1_comm_proc_t *proc,
           mca_pml_ob1_recv_frag_t* frag)
 {
-#ifdef SOFTWARE_EVENTS_ENABLE
+#if SOFTWARE_EVENTS_ENABLE == 1
     opal_timer_t usecs = 0;
 #endif
     SW_EVENT_TIMER_START(OMPI_MATCH_TIME, &usecs);
@@ -611,7 +611,7 @@ match_one(mca_btl_base_module_t *btl,
 static mca_pml_ob1_recv_frag_t* check_cantmatch_for_match(mca_pml_ob1_comm_proc_t *proc)
 {
     mca_pml_ob1_recv_frag_t *frag;
-#ifdef SOFTWARE_EVENTS_ENABLE
+#if SOFTWARE_EVENTS_ENABLE == 1
     opal_timer_t usecs = 0;
 #endif
 

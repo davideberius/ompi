@@ -141,6 +141,14 @@ OMPI_DECLSPEC extern bool ompi_async_mpi_init;
 /* EXPERIMENTAL: do not perform an RTE barrier at the beginning of MPI_Finalize */
 OMPI_DECLSPEC extern bool ompi_async_mpi_finalize;
 
+/**
+ * Whether or not to print the MCA parameters to a file or to stdout
+ *
+ * If this argument is set then it is used when parameters are dumped
+ * when the mpi_show_mca_params is set.
+ */
+OMPI_DECLSPEC extern char * ompi_mpi_spc_enable_string;
+
 
 /**
  * Register MCA parameters used by the MPI layer.
