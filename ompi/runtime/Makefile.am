@@ -28,8 +28,7 @@ headers += \
 		runtime/ompi_cr.h \
         runtime/params.h \
 		runtime/ompi_info_support.h \
-		runtime/ompi_software_events.h \
-		runtime/papi_sde_interface.h
+		runtime/ompi_spc.h
 
 lib@OMPI_LIBMPI_NAME@_la_SOURCES += \
         runtime/ompi_mpi_abort.c \
@@ -40,5 +39,4 @@ lib@OMPI_LIBMPI_NAME@_la_SOURCES += \
         runtime/ompi_mpi_preconnect.c \
 		runtime/ompi_cr.c \
 		runtime/ompi_info_support.c \
-		runtime/ompi_software_events.c \
-		runtime/papi_sde_interface.c
+		runtime/ompi_spc.c

@@ -25,7 +25,7 @@
 #include <stdlib.h>
 
 #include "opal/util/show_help.h"
-#include "ompi/runtime/ompi_software_events.h"
+#include "ompi/runtime/ompi_spc.h"
 #include "ompi/mpi/c/bindings.h"
 #include "ompi/communicator/communicator.h"
 #include "ompi/errhandler/errhandler.h"
@@ -84,7 +84,7 @@ int MPI_Init(int *argc, char ***argv)
 
     OPAL_CR_INIT_LIBRARY();
 
-    SW_EVENT_INIT();
+    SPC_INIT();
 
     return MPI_SUCCESS;
 }

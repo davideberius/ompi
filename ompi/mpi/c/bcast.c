@@ -26,7 +26,7 @@
 #include "ompi/errhandler/errhandler.h"
 #include "ompi/datatype/ompi_datatype.h"
 #include "ompi/memchecker.h"
-#include "ompi/runtime/ompi_software_events.h"
+#include "ompi/runtime/ompi_spc.h"
 
 #if OMPI_BUILD_MPI_PROFILING
 #if OPAL_HAVE_WEAK_SYMBOLS
@@ -42,7 +42,7 @@ int MPI_Bcast(void *buffer, int count, MPI_Datatype datatype,
 {
     int err;
 
-    SW_EVENT_RECORD(OMPI_BCAST, 1);
+    SPC_RECORD(OMPI_BCAST, 1);
 
     MEMCHECKER(
         memchecker_datatype(datatype);
@@ -112,6 +112,5 @@ int MPI_Bcast(void *buffer, int count, MPI_Datatype datatype,
 
     err = comm->c_coll->coll_bcast(buffer, count, datatype, root, comm,
                                   comm->c_coll->coll_bcast_module);
-
     OMPI_ERRHANDLER_RETURN(err, comm, err, FUNC_NAME);
 }

@@ -293,15 +293,15 @@ AC_ARG_ENABLE(spc,
                    [Enable software-based performance counters capability (default: disabled)]))
 if test "$enable_spc" = "yes"; then
     AC_MSG_RESULT([yes])
-    SOFTWARE_EVENTS_ENABLE=1
+    SPC_ENABLE=1
 else
     AC_MSG_RESULT([no])
-    SOFTWARE_EVENTS_ENABLE=0
+    SPC_ENABLE=0
 fi
-AC_DEFINE_UNQUOTED([SOFTWARE_EVENTS_ENABLE],
-                   [$SOFTWARE_EVENTS_ENABLE],
+AC_DEFINE_UNQUOTED([SPC_ENABLE],
+                   [$SPC_ENABLE],
                    [If the software-based performance counters capability should be enabled.])
-AM_CONDITIONAL(SOFTWARE_EVENTS_ENABLE, test "$SOFTWARE_EVENTS_ENABLE" = "1")
+AM_CONDITIONAL(SPC_ENABLE, test "$SPC_ENABLE" = "1")
 
 AS_IF([test "$enable_spc" != "no"], [project_spc_amc=true], [project_spc_amc=false])
 

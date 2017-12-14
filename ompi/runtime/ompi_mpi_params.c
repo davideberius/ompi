@@ -75,7 +75,7 @@ bool ompi_async_mpi_finalize = false;
 uint32_t ompi_add_procs_cutoff = OMPI_ADD_PROCS_CUTOFF_DEFAULT;
 bool ompi_mpi_dynamics_enabled = true;
 
-char *ompi_mpi_spc_enable_string = NULL;
+char *ompi_mpi_spc_attach_string = NULL;
 
 static bool show_default_mca_params = false;
 static bool show_file_mca_params = false;
@@ -317,13 +317,13 @@ int ompi_mpi_register_params(void)
                                       MCA_BASE_VAR_SYN_FLAG_DEPRECATED);
     }
 
-    ompi_mpi_spc_enable_string = NULL;
-    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_enable",
+    ompi_mpi_spc_attach_string = NULL;
+    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_attach",
                                  "A comma delimeted string listing the SPC counters to enable.",
                                  MCA_BASE_VAR_TYPE_STRING, NULL, 0, 0,
                                  OPAL_INFO_LVL_9,
                                  MCA_BASE_VAR_SCOPE_READONLY,
-                                 &ompi_mpi_spc_enable_string);
+                                 &ompi_mpi_spc_attach_string);
 
     return OMPI_SUCCESS;
 }

@@ -142,12 +142,11 @@ OMPI_DECLSPEC extern bool ompi_async_mpi_init;
 OMPI_DECLSPEC extern bool ompi_async_mpi_finalize;
 
 /**
- * Whether or not to print the MCA parameters to a file or to stdout
- *
- * If this argument is set then it is used when parameters are dumped
- * when the mpi_show_mca_params is set.
+ * A comma delimited list of SPC counters to turn on or 'attach'.  To turn
+ * all counters on, the string can be simply "all".  An empty string will
+ * keep all counters turned off.
  */
-OMPI_DECLSPEC extern char * ompi_mpi_spc_enable_string;
+OMPI_DECLSPEC extern char * ompi_mpi_spc_attach_string;
 
 
 /**

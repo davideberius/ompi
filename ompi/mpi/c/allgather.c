@@ -32,7 +32,7 @@
 #include "ompi/errhandler/errhandler.h"
 #include "ompi/datatype/ompi_datatype.h"
 #include "ompi/memchecker.h"
-#include "ompi/runtime/ompi_software_events.h"
+#include "ompi/runtime/ompi_spc.h"
 
 #if OMPI_BUILD_MPI_PROFILING
 #if OPAL_HAVE_WEAK_SYMBOLS
@@ -50,7 +50,7 @@ int MPI_Allgather(const void *sendbuf, int sendcount, MPI_Datatype sendtype,
 {
     int err;
 
-    SW_EVENT_RECORD(OMPI_ALLGATHER, 1);
+    SPC_RECORD(OMPI_ALLGATHER, 1);
 
     MEMCHECKER(
         int rank;

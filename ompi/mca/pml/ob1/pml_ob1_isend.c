@@ -28,7 +28,7 @@
 #include "pml_ob1_sendreq.h"
 #include "pml_ob1_recvreq.h"
 #include "ompi/peruse/peruse-internal.h"
-#include "ompi/runtime/ompi_software_events.h"
+#include "ompi/runtime/ompi_spc.h"
 
 /**
  * Single usage request. As we allow recursive calls (as an
@@ -121,13 +121,8 @@ static inline int mca_pml_ob1_send_inline (const void *buf, size_t count,
                              size, MCA_BTL_NO_ORDER, MCA_BTL_DES_FLAGS_PRIORITY | MCA_BTL_DES_FLAGS_BTL_OWNERSHIP,
                              MCA_PML_OB1_HDR_TYPE_MATCH, NULL);
 
-    if(OPAL_LIKELY(rc == OPAL_SUCCESS)){
-        if(tag >= 0){
-            SW_EVENT_RECORD(OMPI_BYTES_SENT_USER, size);
-        }
-        else{
-            SW_EVENT_RECORD(OMPI_BYTES_SENT_MPI, size);
-        }
+    if(OPAL_LIKELY(rc == OPAL_SUCCESS)) {
+        SPC_USER_OR_MPI(tag, (long long)size, OMPI_BYTES_SENT_USER, OMPI_BYTES_SENT_MPI);
     }
 
     if (count > 0) {

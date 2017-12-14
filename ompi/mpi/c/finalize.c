@@ -23,7 +23,7 @@
 #include "ompi/mpi/c/bindings.h"
 #include "ompi/runtime/params.h"
 #include "ompi/errhandler/errhandler.h"
-#include "ompi/runtime/ompi_software_events.h"
+#include "ompi/runtime/ompi_spc.h"
 
 #if OMPI_BUILD_MPI_PROFILING
 #if OPAL_HAVE_WEAK_SYMBOLS
@@ -40,44 +40,52 @@ int MPI_Finalize(void)
     /* If --with-spc was specified, print all of the final SPC values
      * aggregated across the whole MPI run.
      */
-#if SOFTWARE_EVENTS_ENABLE == 1
+#if SPC_ENABLE == 1
     int i, j, rank, world_size, offset;
     long long *recv_buffer, *send_buffer;
 
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
-    if(rank == 0){
+    /* Aggregate all of the information on rank 0 using MPI_Gather on MPI_COMM_WORLD */
+    if(rank == 0) {
         send_buffer = (long long*)malloc(OMPI_NUM_COUNTERS * sizeof(long long));
         recv_buffer = (long long*)malloc(world_size * OMPI_NUM_COUNTERS * sizeof(long long));
-        for(i = 0; i < OMPI_NUM_COUNTERS; i++){
+        for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
             send_buffer[i] = events[i].value;
         }
         MPI_Gather(send_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, recv_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
-    }
-    else{
+    } else {
         send_buffer = (long long*)malloc(OMPI_NUM_COUNTERS * sizeof(long long));
-        for(i = 0; i < OMPI_NUM_COUNTERS; i++){
+        for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
             send_buffer[i] = events[i].value;
         }
         MPI_Gather(send_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, recv_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
     }
 
-    if(rank == 0){
+    /* Once rank 0 has all of the information, print the aggregated counter values for each rank in order */
+    if(rank == 0) {
         fprintf(stdout, "OMPI Software Counters:\n");
-        offset = 0;
-        for(j = 0; j < world_size; j++){
+        offset = 0; /* Offset into the recv_buffer for each rank */
+        for(j = 0; j < world_size; j++) {
             fprintf(stdout, "World Rank %d:\n", j);
-            for(i = 0; i < OMPI_NUM_COUNTERS; i++){
-                fprintf(stdout, "%s -> %lld\n", events[i].name, recv_buffer[offset+i]);
+            for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
+                if(attached_event[i]) {
+                    /* If this is a timer-based counter, we need to covert from cycles to usecs */
+                    if(timer_event[i])
+                        SPC_CYCLES_TO_USECS(&recv_buffer[offset+i]);
+                    fprintf(stdout, "%s -> %lld\n", events[i].name, recv_buffer[offset+i]);
+                } else {
+                    fprintf(stdout, "%s -> Disabled\n", events[i].name);
+                }
             }
             fprintf(stdout, "\n");
             offset += OMPI_NUM_COUNTERS;
         }
         free(recv_buffer);
         free(send_buffer);
-    }
-    else{
+        SPC_FINI();
+    } else {
         free(send_buffer);
     }
 

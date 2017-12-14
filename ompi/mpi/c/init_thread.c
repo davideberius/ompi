@@ -26,7 +26,7 @@
 #include "ompi_config.h"
 
 #include "opal/util/show_help.h"
-#include "ompi/runtime/ompi_software_events.h"
+#include "ompi/runtime/ompi_spc.h"
 #include "ompi/mpi/c/bindings.h"
 #include "ompi/runtime/params.h"
 #include "ompi/communicator/communicator.h"
@@ -48,8 +48,6 @@ int MPI_Init_thread(int *argc, char ***argv, int required,
                     int *provided)
 {
     int err;
-
-    SW_EVENT_INIT();
 
     ompi_hook_base_mpi_init_thread_top(argc, argv, required, provided);
 
@@ -83,6 +81,8 @@ int MPI_Init_thread(int *argc, char ***argv, int required,
     }
 
     OPAL_CR_INIT_LIBRARY();
+
+    SPC_INIT();
 
     ompi_hook_base_mpi_init_thread_bottom(argc, argv, required, provided);
 
