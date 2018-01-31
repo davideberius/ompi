@@ -1,9 +1,23 @@
+/*
+ * Copyright (c) 2004-2018 The University of Tennessee and The University
+ *                         of Tennessee Research Foundation.  All rights
+ *                         reserved.
+ *
+ * $COPYRIGHT$
+ *
+ * Additional copyrights may follow
+ *
+ * $HEADER$
+ */
+
 #include "ompi_spc.h"
 
 opal_timer_t sys_clock_freq_mhz = 0;
 
 /* Array for converting from SPC indices to MPI_T indices */
 OMPI_DECLSPEC int mpi_t_indices[OMPI_NUM_COUNTERS] = {0};
+OMPI_DECLSPEC int mpi_t_offset = -1;
+OMPI_DECLSPEC int mpi_t_disabled = 0;
 
 /* Array of names for each counter.  Used for MPI_T and PAPI sde initialization */
 OMPI_DECLSPEC const char *counter_names[OMPI_NUM_COUNTERS] = {
@@ -27,7 +41,11 @@ OMPI_DECLSPEC const char *counter_names[OMPI_NUM_COUNTERS] = {
     "OMPI_UNEXPECTED",
     "OMPI_OUT_OF_SEQUENCE",
     "OMPI_MATCH_TIME",
-    "OMPI_OOS_MATCH_TIME"
+    "OMPI_OOS_MATCH_TIME",
+    "OMPI_UNEXPECTED_IN_QUEUE",
+    "OMPI_OOS_IN_QUEUE",
+    "OMPI_MAX_UNEXPECTED_IN_QUEUE",
+    "OMPI_MAX_OOS_IN_QUEUE"
 };
 
 /* Array of descriptions for each counter.  Used for MPI_T and PAPI sde initialization */
@@ -43,16 +61,22 @@ OMPI_DECLSPEC const char *counter_descriptions[OMPI_NUM_COUNTERS] = {
     "The number of times MPI_Gather was called.",
     "The number of times MPI_Alltoall was called.",
     "The number of times MPI_Allgather was called.",
-    "The number of bytes received by the user through point-to-point communications. Note: Excludes RDMA operations.",
+    "The number of bytes received by the user through point-to-point communications. Note: Includes bytes transferred using internal RMA operations.",
     "The number of bytes received by MPI through collective, control, or other internal communications.",
-    "The number of bytes sent by the user through point-to-point communications.  Note: Excludes RDMA operations.",
+    "The number of bytes sent by the user through point-to-point communications.  Note: Includes bytes transferred using internal RMA operations.",
     "The number of bytes sent by MPI through collective, control, or other internal communications.",
-    "The number of bytes sent/received using RDMA Put operations.",
-    "The number of bytes sent/received using RDMA Get operations.",
+    "The number of bytes sent/received using RMA Put operations both through user-level Put functions and internal Put functions.",
+    "The number of bytes sent/received using RMA Get operations both through user-level Get functions and internal Get functions.",
     "The number of messages that arrived as unexpected messages.",
     "The number of messages that arrived out of the proper sequence.",
     "The number of microseconds spent matching unexpected messages.",
-    "The number of microseconds spent matching out of sequence messages."
+    "The number of microseconds spent matching out of sequence messages.",
+    "The number of messages that are currently in the unexpected message queue(s) of an MPI process.",
+    "The number of messages that are currently in the out of sequence message queue(s) of an MPI process.",
+    "The maximum number of messages that the unexpected message queue(s) within an MPI process contained at once since the last reset of this counter.  \
+Note: This counter is reset each time it is read.",
+    "The maximum number of messages that the out of sequence message queue(s) within an MPI process contained at once since the last reset of this counter.  \
+Note: This counter is reset each time it is read."
 };
 
 /* An array of integer values to denote whether an event is activated (1) or not (0) */
@@ -70,33 +94,29 @@ static int ompi_spc_notify(mca_base_pvar_t *pvar, mca_base_pvar_event_t event, v
 {
     (void)obj_handle;
 
-    int i;
+    int index;
+
+    if(OPAL_UNLIKELY(mpi_t_disabled == 1))
+        return MPI_SUCCESS;
 
     /* For this event, we need to set count to the number of long long type
      * values for this counter.  All SPC counters are one long long, so we
      * always set count to 1.
      */
-    if(MCA_BASE_PVAR_HANDLE_BIND == event)
+    if(MCA_BASE_PVAR_HANDLE_BIND == event) {
         *count = 1;
+    }
     /* For this event, we need to turn on the counter */
     else if(MCA_BASE_PVAR_HANDLE_START == event) {
-        /* Loop over the mpi_t_inddices array and find the correct SPC index to turn on */
-        for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
-            if(pvar->pvar_index == mpi_t_indices[i]) {
-                attached_event[i] = 1;
-                break;
-            }
-        }
+        /* Convert from MPI_T pvar index to SPC index */
+        index = pvar->pvar_index - mpi_t_offset;
+        attached_event[index] = 1;
     }
     /* For this event, we need to turn off the counter */
     else if(MCA_BASE_PVAR_HANDLE_STOP == event) {
-        /* Loop over the mpi_t_inddices array and find the correct SPC index to turn off */
-        for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
-            if(pvar->pvar_index == mpi_t_indices[i]) {
-                attached_event[i] = 0;
-                break;
-            }
-        }
+        /* Convert from MPI_T pvar index to SPC index */
+        index = pvar->pvar_index - mpi_t_offset;
+        attached_event[index] = 0;
     }
 
     return MPI_SUCCESS;
@@ -116,21 +136,24 @@ static int ompi_spc_get_count(const struct mca_base_pvar_t *pvar, void *value, v
 {   
     (void) obj_handle;
 
-    int i;
     long long *counter_value = (long long*)value;
 
-    for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
-        if(pvar->pvar_index == mpi_t_indices[i]) {
-            /* If this is a timer-based counter, we need to convert from cycles to microseconds */
-            if(timer_event[i])
-                *counter_value = events[i].value / sys_clock_freq_mhz;
-            else
-                *counter_value = events[i].value;
-            return MPI_SUCCESS;
-        }
+    if(OPAL_UNLIKELY(mpi_t_disabled == 1)) {
+        *counter_value = 0;
+        return MPI_SUCCESS;
     }
-    /* If all else fails, simply set value to 0 */
-    *counter_value = 0;
+
+    /* Convert from MPI_T pvar index to SPC index */
+    int index = pvar->pvar_index - mpi_t_offset;
+    /* Set the counter value to the current SPC value */
+    *counter_value = events[index].value;
+    /* If this is a timer-based counter, convert from cycles to microseconds */
+    if(timer_event[index])
+        *counter_value /= sys_clock_freq_mhz;
+    /* If this is a high watermark counter, reset it after it has been read */
+    if(index == OMPI_MAX_UNEXPECTED_IN_QUEUE || index == OMPI_MAX_OOS_IN_QUEUE)
+        events[index].value = 0;
+
     return MPI_SUCCESS;
 }
 
@@ -176,6 +199,7 @@ void ompi_spc_init()
             all_on = 1;
     }
 
+    int prev = -1;
     /* Turn on only the counters that were specified in the MCA parameter */
     for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
         if(all_on)
@@ -213,8 +237,22 @@ void ompi_spc_init()
          */
         if(ret != OPAL_ERROR) {
             mpi_t_indices[i] = ret;
+
+            if(mpi_t_offset == -1) {
+                mpi_t_offset = ret;
+                prev = ret;
+            } else if(ret != prev + 1) {
+                mpi_t_disabled = 1;
+                fprintf(stderr, "There was an error registering SPCs as MPI_T pvars.  SPCs will be disabled for MPI_T.\n");
+                break;
+            } else {
+                prev = ret;
+            }
         } else {
             mpi_t_indices[i] = -1;
+            mpi_t_disabled = 1;
+            fprintf(stderr, "There was an error registering SPCs as MPI_T pvars.  SPCs will be disabled for MPI_T.\n");
+            break;
         }
     }
 }
@@ -266,10 +304,26 @@ void ompi_spc_timer_stop(unsigned int event_id, opal_timer_t *cycles)
  */
 void ompi_spc_user_or_mpi(int tag, long long value, unsigned int user_enum, unsigned int mpi_enum)
 {
-    if(tag >= 0) {
+    if(tag >= 0 || tag == MPI_ANY_TAG) {
         SPC_RECORD(user_enum, value);
     } else {
         SPC_RECORD(mpi_enum, value);
+    }
+}
+
+/* Checks whether the counter denoted by value_enum exceeds the current value of the
+ * counter denoted by watermark_enum, and if so sets the watermark_enum counter to the
+ * value of the value_enum counter.
+ */
+void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_enum)
+{
+    /* Denoted unlikely because counters will often be turned off. */
+    if(OPAL_UNLIKELY(attached_event[watermark_enum] == 1 && attached_event[value_enum] == 1)) {
+        /* WARNING: This assumes that this function was called while a lock has already been taken.
+         *          This function is NOT thread safe otherwise!
+         */
+        if(events[value_enum].value > events[watermark_enum].value)
+            events[watermark_enum].value = events[value_enum].value;
     }
 }
 

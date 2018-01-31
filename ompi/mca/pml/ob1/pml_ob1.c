@@ -254,6 +254,8 @@ int mca_pml_ob1_add_comm(ompi_communicator_t* comm)
             continue;
         }
 
+        SPC_TIMER_START(OMPI_OOS_MATCH_TIME, &timer);
+
         if (((uint16_t)hdr->hdr_seq) == ((uint16_t)pml_proc->expected_sequence) ) {
 
         add_fragment_to_unexpected:
@@ -268,7 +270,6 @@ int mca_pml_ob1_add_comm(ompi_communicator_t* comm)
              * situation as the cant_match is only checked when a new fragment is received from
              * the network.
              */
-            SW_EVENT_TIMER_START(OMPI_OOS_MATCH_TIME, &usecs);
             if( NULL != pml_proc->frags_cant_match ) {
                 frag = check_cantmatch_for_match(pml_proc);
                 if( NULL != frag ) {
@@ -276,11 +277,11 @@ int mca_pml_ob1_add_comm(ompi_communicator_t* comm)
                     goto add_fragment_to_unexpected;
                 }
             }
-            SPC_TIMER_STOP(OMPI_OOS_MATCH_TIME, &timer);
         } else {
             append_frag_to_ordered_list(&pml_proc->frags_cant_match, frag,
                                         pml_proc->expected_sequence);
         }
+        SPC_TIMER_STOP(OMPI_OOS_MATCH_TIME, &timer);
     }
     return OMPI_SUCCESS;
 }

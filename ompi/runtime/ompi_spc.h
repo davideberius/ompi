@@ -1,3 +1,15 @@
+/*
+ * Copyright (c) 2004-2018 The University of Tennessee and The University
+ *                         of Tennessee Research Foundation.  All rights
+ *                         reserved.
+ *
+ * $COPYRIGHT$
+ *
+ * Additional copyrights may follow
+ *
+ * $HEADER$
+ */
+
 #ifndef OMPI_SPC
 #define OMPI_SPC
 
@@ -58,6 +70,10 @@ enum OMPI_COUNTERS{
     OMPI_OUT_OF_SEQUENCE,
     OMPI_MATCH_TIME,
     OMPI_OOS_MATCH_TIME,
+    OMPI_UNEXPECTED_IN_QUEUE,
+    OMPI_OOS_IN_QUEUE,
+    OMPI_MAX_UNEXPECTED_IN_QUEUE,
+    OMPI_MAX_OOS_IN_QUEUE,
     OMPI_NUM_COUNTERS /* This serves as the number of counters.  It must be last. */
 };
 
@@ -82,6 +98,7 @@ void ompi_spc_timer_start(unsigned int event_id, opal_timer_t *cycles);
 void ompi_spc_timer_stop(unsigned int event_id, opal_timer_t *cycles);
 void ompi_spc_user_or_mpi(int tag, long long value, unsigned int user_enum, unsigned int mpi_enum);
 void ompi_spc_cycles_to_usecs(long long *cycles);
+void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_enum);
 
 /* MPI_T utility functions */
 static int ompi_spc_notify(mca_base_pvar_t *pvar, mca_base_pvar_event_t event, void *obj_handle, int *count);
@@ -113,6 +130,9 @@ long long ompi_spc_get_counter(int counter_id);
 #define SPC_CYCLES_TO_USECS(cycles) \
     ompi_spc_cycles_to_usecs(cycles)
 
+#define SPC_UPDATE_WATERMARK(watermark_enum, value_enum) \
+    ompi_spc_update_watermark(watermark_enum, value_enum)
+
 #else /* SPCs are not enabled */
 
 #define SPC_INIT()  \
@@ -134,6 +154,9 @@ long long ompi_spc_get_counter(int counter_id);
     do {} while (0)
 
 #define SPC_CYCLES_TO_USECS(cycles) \
+    do {} while (0)
+
+#define SPC_UPDATE_WATERMARK(watermark_enum, value_enum) \
     do {} while (0)
 
 #endif

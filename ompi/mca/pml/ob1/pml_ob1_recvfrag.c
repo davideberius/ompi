@@ -844,6 +844,8 @@ match_one(mca_btl_base_module_t *btl,
         append_frag_to_list(&proc->unexpected_frags, btl, hdr, segments,
                             num_segments, frag);
         SPC_RECORD(OMPI_UNEXPECTED, 1);
+        SPC_RECORD(OMPI_UNEXPECTED_IN_QUEUE, 1);
+        SPC_UPDATE_WATERMARK(OMPI_MAX_UNEXPECTED_IN_QUEUE, OMPI_UNEXPECTED_IN_QUEUE);
         PERUSE_TRACE_MSG_EVENT(PERUSE_COMM_MSG_INSERT_IN_UNEX_Q, comm_ptr,
                                hdr->hdr_src, hdr->hdr_tag, PERUSE_RECV);
         SPC_TIMER_STOP(OMPI_MATCH_TIME, &timer);
@@ -940,6 +942,11 @@ static int mca_pml_ob1_recv_frag_match( mca_btl_base_module_t *btl,
         MCA_PML_OB1_RECV_FRAG_ALLOC(frag);
         MCA_PML_OB1_RECV_FRAG_INIT(frag, hdr, segments, num_segments, btl);
         append_frag_to_ordered_list(&proc->frags_cant_match, frag, next_msg_seq_expected);
+
+        SPC_RECORD(OMPI_OUT_OF_SEQUENCE, 1);
+        SPC_RECORD(OMPI_OOS_IN_QUEUE, 1);
+        SPC_UPDATE_WATERMARK(OMPI_MAX_OOS_IN_QUEUE, OMPI_OOS_IN_QUEUE);
+
         OB1_MATCHING_UNLOCK(&comm->matching_lock);
         return OMPI_SUCCESS;
     }

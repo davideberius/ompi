@@ -2,7 +2,7 @@
  * Copyright (c) 2004-2007 The Trustees of Indiana University and Indiana
  *                         University Research and Technology
  *                         Corporation.  All rights reserved.
- * Copyright (c) 2004-2005 The University of Tennessee and The University
+ * Copyright (c) 2004-2018 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  * Copyright (c) 2004-2005 High Performance Computing Center Stuttgart,
@@ -25,6 +25,8 @@
 #include "ompi/errhandler/errhandler.h"
 #include "ompi/runtime/ompi_spc.h"
 
+#include "ompi/runtime/params.h"
+
 #if OMPI_BUILD_MPI_PROFILING
 #if OPAL_HAVE_WEAK_SYMBOLS
 #pragma weak MPI_Finalize = PMPI_Finalize
@@ -41,6 +43,9 @@ int MPI_Finalize(void)
      * aggregated across the whole MPI run.
      */
 #if SPC_ENABLE == 1
+    if(!ompi_mpi_spc_dump_enabled)
+        goto skip_dump;
+
     int i, j, rank, world_size, offset;
     long long *recv_buffer, *send_buffer;
 
@@ -90,6 +95,7 @@ int MPI_Finalize(void)
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
+ skip_dump:
 #endif
 
     OPAL_CR_FINALIZE_LIBRARY();

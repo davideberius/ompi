@@ -1245,6 +1245,7 @@ void mca_pml_ob1_recv_req_start(mca_pml_ob1_recv_request_t *req)
 
             opal_list_remove_item(&proc->unexpected_frags,
                                   (opal_list_item_t*)frag);
+            SPC_RECORD(OMPI_UNEXPECTED_IN_QUEUE, -1);
             OB1_MATCHING_UNLOCK(&ob1_comm->matching_lock);
 
             switch(hdr->hdr_common.hdr_type) {
@@ -1275,6 +1276,7 @@ void mca_pml_ob1_recv_req_start(mca_pml_ob1_recv_request_t *req)
                restarted with this request during mrecv */
             opal_list_remove_item(&proc->unexpected_frags,
                                   (opal_list_item_t*)frag);
+            SPC_RECORD(OMPI_UNEXPECTED_IN_QUEUE, -1);
             OB1_MATCHING_UNLOCK(&ob1_comm->matching_lock);
 
             req->req_recv.req_base.req_addr = frag;
