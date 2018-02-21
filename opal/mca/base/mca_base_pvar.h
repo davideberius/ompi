@@ -2,6 +2,9 @@
 /*
  * Copyright (c) 2013-2015 Los Alamos National Security, LLC. All rights
  *                         reserved.
+ * Copyright (c) 2018 The University of Tennessee and The University
+ *                    of Tennessee Research Foundation.  All rights
+ *                    reserved.
  *
  * Additional copyrights may follow
  *
