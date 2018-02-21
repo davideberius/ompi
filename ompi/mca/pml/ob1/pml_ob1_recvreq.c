@@ -200,7 +200,7 @@ static void mca_pml_ob1_put_completion (mca_pml_ob1_rdma_frag_t *frag, int64_t r
 
         /* check completion status */
         OPAL_THREAD_ADD_FETCH_SIZE_T(&recvreq->req_bytes_received, rdma_size);
-        SPC_USER_OR_MPI(recvreq->req_recv.req_base.req_tag, (long long)rdma_size,
+        SPC_USER_OR_MPI(recvreq->req_recv.req_base.req_ompi.req_status.MPI_TAG, (long long)rdma_size,
                         OMPI_BYTES_RECEIVED_USER, OMPI_BYTES_RECEIVED_MPI);
         if (recv_request_pml_complete_check(recvreq) == false &&
             recvreq->req_rdma_offset < recvreq->req_send_offset) {
@@ -535,7 +535,7 @@ void mca_pml_ob1_recv_request_progress_frag( mca_pml_ob1_recv_request_t* recvreq
                );
 
     OPAL_THREAD_ADD_FETCH_SIZE_T(&recvreq->req_bytes_received, bytes_received);
-    SPC_USER_OR_MPI(recvreq->req_recv.req_base.req_tag, (long long)bytes_received,
+    SPC_USER_OR_MPI(recvreq->req_recv.req_base.req_ompi.req_status.MPI_TAG, (long long)bytes_received,
                     OMPI_BYTES_RECEIVED_USER, OMPI_BYTES_RECEIVED_MPI);
     /* check completion status */
     if(recv_request_pml_complete_check(recvreq) == false &&
@@ -614,7 +614,7 @@ void mca_pml_ob1_recv_request_frag_copy_finished( mca_btl_base_module_t* btl,
     des->des_cbfunc(NULL, NULL, des, 0);
 
     OPAL_THREAD_ADD_FETCH_SIZE_T(&recvreq->req_bytes_received, bytes_received);
-    SPC_USER_OR_MPI(recvreq->req_recv.req_base.req_tag, (long long)bytes_received,
+    SPC_USER_OR_MPI(recvreq->req_recv.req_base.req_ompi.req_status.MPI_TAG, (long long)bytes_received,
                     OMPI_BYTES_RECEIVED_USER, OMPI_BYTES_RECEIVED_MPI);
     /* check completion status */
     if(recv_request_pml_complete_check(recvreq) == false &&
@@ -829,7 +829,7 @@ void mca_pml_ob1_recv_request_progress_rndv( mca_pml_ob1_recv_request_t* recvreq
                                    recvreq->req_recv.req_base.req_datatype);
                    );
         OPAL_THREAD_ADD_FETCH_SIZE_T(&recvreq->req_bytes_received, bytes_received);
-        SPC_USER_OR_MPI(recvreq->req_recv.req_base.req_tag, (long long)bytes_received,
+        SPC_USER_OR_MPI(recvreq->req_recv.req_base.req_ompi.req_status.MPI_TAG, (long long)bytes_received,
                         OMPI_BYTES_RECEIVED_USER, OMPI_BYTES_RECEIVED_MPI);
     }
     /* check completion status */
@@ -901,7 +901,7 @@ void mca_pml_ob1_recv_request_progress_match( mca_pml_ob1_recv_request_t* recvre
      * for this request.
      */
     recvreq->req_bytes_received += bytes_received;
-    SPC_USER_OR_MPI(recvreq->req_recv.req_base.req_tag, (long long)bytes_received,
+    SPC_USER_OR_MPI(recvreq->req_recv.req_base.req_ompi.req_status.MPI_TAG, (long long)bytes_received,
                     OMPI_BYTES_RECEIVED_USER, OMPI_BYTES_RECEIVED_MPI);
     recv_request_pml_complete(recvreq);
 }

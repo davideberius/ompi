@@ -206,7 +206,7 @@ mca_pml_ob1_rndv_completion_request( mca_bml_base_btl_t* bml_btl,
     }
 
     OPAL_THREAD_ADD_FETCH_SIZE_T(&sendreq->req_bytes_delivered, req_bytes_delivered);
-    SPC_USER_OR_MPI(sendreq->req_send.req_base.req_tag, req_bytes_delivered,
+    SPC_USER_OR_MPI(sendreq->req_send.req_base.req_ompi.req_status.MPI_TAG, req_bytes_delivered,
                     OMPI_BYTES_SENT_USER, OMPI_BYTES_SENT_MPI);
 
     /* advance the request */
@@ -264,7 +264,7 @@ mca_pml_ob1_rget_completion (mca_pml_ob1_rdma_frag_t *frag, int64_t rdma_length)
     /* count bytes of user data actually delivered and check for request completion */
     if (OPAL_LIKELY(0 < rdma_length)) {
         OPAL_THREAD_ADD_FETCH_SIZE_T(&sendreq->req_bytes_delivered, (size_t) rdma_length);
-        SPC_USER_OR_MPI(sendreq->req_send.req_base.req_tag, rdma_length,
+        SPC_USER_OR_MPI(sendreq->req_send.req_base.req_ompi.req_status.MPI_TAG, rdma_length,
                         OMPI_BYTES_SENT_USER, OMPI_BYTES_SENT_MPI);
     }
 
@@ -319,7 +319,7 @@ mca_pml_ob1_frag_completion( mca_btl_base_module_t* btl,
 
     OPAL_THREAD_ADD_FETCH32(&sendreq->req_pipeline_depth, -1);
     OPAL_THREAD_ADD_FETCH_SIZE_T(&sendreq->req_bytes_delivered, req_bytes_delivered);
-    SPC_USER_OR_MPI(sendreq->req_send.req_base.req_tag, req_bytes_delivered,
+    SPC_USER_OR_MPI(sendreq->req_send.req_base.req_ompi.req_status.MPI_TAG, req_bytes_delivered,
                     OMPI_BYTES_SENT_USER, OMPI_BYTES_SENT_MPI);
 
     if(send_request_pml_complete_check(sendreq) == false) {
@@ -503,7 +503,7 @@ int mca_pml_ob1_send_request_start_copy( mca_pml_ob1_send_request_t* sendreq,
                                  &des);
         if( OPAL_LIKELY(OMPI_SUCCESS == rc) ) {
             /* signal request completion */
-            SPC_USER_OR_MPI(sendreq->req_send.req_base.req_tag, size,
+            SPC_USER_OR_MPI(sendreq->req_send.req_base.req_ompi.req_status.MPI_TAG, size,
                             OMPI_BYTES_SENT_USER, OMPI_BYTES_SENT_MPI);
             send_request_pml_complete(sendreq);
             return OMPI_SUCCESS;
@@ -575,7 +575,7 @@ int mca_pml_ob1_send_request_start_copy( mca_pml_ob1_send_request_t* sendreq,
 
     /* send */
     rc = mca_bml_base_send_status(bml_btl, des, MCA_PML_OB1_HDR_TYPE_MATCH);
-    SPC_USER_OR_MPI(sendreq->req_send.req_base.req_tag, size,
+    SPC_USER_OR_MPI(sendreq->req_send.req_base.req_ompi.req_status.MPI_TAG, size,
                     OMPI_BYTES_SENT_USER, OMPI_BYTES_SENT_MPI);
     if( OPAL_LIKELY( rc >= OPAL_SUCCESS ) ) {
         if( OPAL_LIKELY( 1 == rc ) ) {
@@ -637,7 +637,7 @@ int mca_pml_ob1_send_request_start_prepare( mca_pml_ob1_send_request_t* sendreq,
 
     /* send */
     rc = mca_bml_base_send(bml_btl, des, MCA_PML_OB1_HDR_TYPE_MATCH);
-    SPC_USER_OR_MPI(sendreq->req_send.req_base.req_tag, size,
+    SPC_USER_OR_MPI(sendreq->req_send.req_base.req_ompi.req_status.MPI_TAG, size,
                     OMPI_BYTES_SENT_USER, OMPI_BYTES_SENT_MPI);
     if( OPAL_LIKELY( rc >= OPAL_SUCCESS ) ) {
         if( OPAL_LIKELY( 1 == rc ) ) {
@@ -1139,7 +1139,7 @@ static void mca_pml_ob1_put_completion (mca_btl_base_module_t* btl, struct mca_b
 
         /* check for request completion */
         OPAL_THREAD_ADD_FETCH_SIZE_T(&sendreq->req_bytes_delivered, frag->rdma_length);
-        SPC_USER_OR_MPI(sendreq->req_send.req_base.req_tag, frag->rdma_length,
+        SPC_USER_OR_MPI(sendreq->req_send.req_base.req_ompi.req_status.MPI_TAG, frag->rdma_length,
                         OMPI_BYTES_SENT_USER, OMPI_BYTES_SENT_MPI);
 
         send_request_pml_complete_check(sendreq);

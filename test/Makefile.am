@@ -24,6 +24,6 @@
 # support needs to be first for dependencies
 SUBDIRS = support asm class threads datatype util dss
 if PROJECT_OMPI
-SUBDIRS += monitoring
+SUBDIRS += monitoring spc
 endif
 DIST_SUBDIRS = event $(SUBDIRS)

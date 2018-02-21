@@ -18,8 +18,7 @@
 #include <string.h>
 #include <dlfcn.h>
 
-#include "ompi/include/mpi.h"
-#include "ompi/include/ompi_config.h"
+#include "ompi/communicator/communicator.h"
 #include "ompi/datatype/ompi_datatype.h"
 #include "ompi/runtime/params.h"
 #include "opal/mca/timer/timer.h"
@@ -53,6 +52,8 @@ enum OMPI_COUNTERS{
     OMPI_RECV,
     OMPI_ISEND,
     OMPI_IRECV,
+    OMPI_SENDRECV,
+    OMPI_SENDRECV_REPLACE,
     OMPI_BCAST,
     OMPI_REDUCE,
     OMPI_ALLREDUCE,

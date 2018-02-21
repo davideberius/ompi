@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2004-2018 The University of Tennessee and The University
- *                         of Tennessee Research Foundation.  All rights
- *                         reserved.
+ * Copyright (c) 2018 The University of Tennessee and The University
+ *                    of Tennessee Research Foundation.  All rights
+ *                    reserved.
  *
  * $COPYRIGHT$
  *
@@ -25,6 +25,8 @@ OMPI_DECLSPEC const char *counter_names[OMPI_NUM_COUNTERS] = {
     "OMPI_RECV",
     "OMPI_ISEND",
     "OMPI_IRECV",
+    "OMPI_SENDRECV",
+    "OMPI_SENDRECV_REPLACE",
     "OMPI_BCAST",
     "OMPI_REDUCE",
     "OMPI_ALLREDUCE",
@@ -54,6 +56,8 @@ OMPI_DECLSPEC const char *counter_descriptions[OMPI_NUM_COUNTERS] = {
     "The number of times MPI_Recv was called.",
     "The number of times MPI_Isend was called.",
     "The number of times MPI_Irecv was called.",
+    "The number of times MPI_Sendrecv was called.",
+    "The number of times MPI_Sendrecv_replace was called.",
     "The number of times MPI_Bcast was called.",
     "The number of times MPI_Reduce was called.",
     "The number of times MPI_Allreduce was called.",
@@ -260,7 +264,67 @@ void ompi_spc_init()
 /* Frees any dynamically alocated OMPI SPC data structures */
 void ompi_spc_fini()
 {
-    free(events);
+#if SPC_ENABLE == 1
+    if(!ompi_mpi_spc_dump_enabled)
+        goto skip_dump;
+
+    int i, j, rank, world_size, offset;
+    long long *recv_buffer, *send_buffer;
+
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    /* Aggregate all of the information on rank 0 using MPI_Gather on MPI_COMM_WORLD */
+    if(rank == 0) {
+        send_buffer = (long long*)malloc(OMPI_NUM_COUNTERS * sizeof(long long));
+        recv_buffer = (long long*)malloc(world_size * OMPI_NUM_COUNTERS * sizeof(long long));
+        for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
+            send_buffer[i] = events[i].value;
+        }
+        MPI_Gather(send_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, recv_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+    } else {
+        send_buffer = (long long*)malloc(OMPI_NUM_COUNTERS * sizeof(long long));
+        for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
+            send_buffer[i] = events[i].value;
+        }
+        MPI_Gather(send_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, recv_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+    }
+
+    /* Once rank 0 has all of the information, print the aggregated counter values for each rank in order */
+    if(rank == 0) {
+        fprintf(stdout, "OMPI Software Counters:\n");
+        offset = 0; /* Offset into the recv_buffer for each rank */
+        for(j = 0; j < world_size; j++) {
+            fprintf(stdout, "World Rank %d:\n", j);
+            for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
+                if(attached_event[i]) {
+                    /* If this is a timer-based counter, we need to covert from cycles to usecs */
+                    if(timer_event[i])
+                        SPC_CYCLES_TO_USECS(&recv_buffer[offset+i]);
+                    fprintf(stdout, "%s -> %lld\n", events[i].name, recv_buffer[offset+i]);
+                } else {
+                    fprintf(stdout, "%s -> Disabled\n", events[i].name);
+                }
+            }
+            fprintf(stdout, "\n");
+            offset += OMPI_NUM_COUNTERS;
+        }
+        free(recv_buffer);
+        free(send_buffer);
+    } else {
+        free(send_buffer);
+    }
+
+    MPI_Barrier(MPI_COMM_WORLD);
+ skip_dump:
+    if(rank == 0)
+        free(events);
+#else
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    if(rank == 0)
+        free(events);
+#endif
 }
 
 /* Records an update to a counter using an atomic add operation. */
@@ -304,7 +368,7 @@ void ompi_spc_timer_stop(unsigned int event_id, opal_timer_t *cycles)
  */
 void ompi_spc_user_or_mpi(int tag, long long value, unsigned int user_enum, unsigned int mpi_enum)
 {
-    if(tag >= 0 || tag == MPI_ANY_TAG) {
+    if(tag >= 0) {
         SPC_RECORD(user_enum, value);
     } else {
         SPC_RECORD(mpi_enum, value);
