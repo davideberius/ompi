@@ -314,14 +314,14 @@ mca_pml_ob1_recv_frag_t*
 check_cantmatch_for_match(mca_pml_ob1_comm_proc_t *proc)
 {
     mca_pml_ob1_recv_frag_t *frag = proc->frags_cant_match;
-
-#if SOFTWARE_EVENTS_ENABLE == 1
+#if SPC_ENABLE == 1
     opal_timer_t timer = 0;
 #endif
-    SW_EVENT_TIMER_START(OMPI_OOS_MATCH_TIME, &timer);
+
+    SPC_TIMER_START(OMPI_OOS_MATCH_TIME, &timer);
     if( (NULL != frag) && (frag->hdr.hdr_match.hdr_seq == proc->expected_sequence) ) {
         mca_pml_ob1_recv_frag_t* ret = remove_head_from_ordered_list(&proc->frags_cant_match);
-        SW_EVENT_TIMER_STOP(OMPI_OOS_MATCH_TIME, &timer);
+        SPC_TIMER_STOP(OMPI_OOS_MATCH_TIME, &timer);
         return ret;
     }
     SPC_TIMER_STOP(OMPI_OOS_MATCH_TIME, &timer);
@@ -396,7 +396,7 @@ void mca_pml_ob1_recv_frag_callback_match(mca_btl_base_module_t* btl,
             MCA_PML_OB1_RECV_FRAG_ALLOC(frag);
             MCA_PML_OB1_RECV_FRAG_INIT(frag, hdr, segments, num_segments, btl);
             append_frag_to_ordered_list(&proc->frags_cant_match, frag, proc->expected_sequence);
-            SW_EVENT_RECORD(OMPI_OUT_OF_SEQUENCE, 1);
+            SPC_RECORD(OMPI_OUT_OF_SEQUENCE, 1);
             OB1_MATCHING_UNLOCK(&comm->matching_lock);
             return;
         }
