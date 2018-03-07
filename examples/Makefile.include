@@ -58,4 +58,4 @@ EXTRA_DIST += \
         examples/oshmem_symmetric_data.c \
         examples/Hello.java \
         examples/Ring.java \
-		examples/spc_example.c
+        examples/spc_example.c

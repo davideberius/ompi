@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2018 The University of Tennessee and The University
- *                    of Tennessee Research Foundation.  All rights
- *                    reserved.
+ * Copyright (c) 2018      The University of Tennessee and The University
+ *                         of Tennessee Research Foundation.  All rights
+ *                         reserved.
  *
  * Simple example usage of SPCs through MPI_T.
  */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004-2018 The University of Tennessee and The University
+ * Copyright (c) 2018      The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  *
@@ -119,7 +119,6 @@ enum OMPI_COUNTERS{
     OMPI_UNEXPECTED,
     OMPI_OUT_OF_SEQUENCE,
     OMPI_MATCH_TIME,
-    OMPI_OOS_MATCH_TIME,
     OMPI_UNEXPECTED_IN_QUEUE,
     OMPI_OOS_IN_QUEUE,
     OMPI_MAX_UNEXPECTED_IN_QUEUE,

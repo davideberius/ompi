@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2018 The University of Tennessee and The University
- *                    of Tennessee Research Foundation.  All rights
- *                    reserved.
+ * Copyright (c) 2018      The University of Tennessee and The University
+ *                         of Tennessee Research Foundation.  All rights
+ *                         reserved.
  *
  * $COPYRIGHT$
  *
@@ -92,7 +92,6 @@ OMPI_DECLSPEC const char *counter_names[OMPI_NUM_COUNTERS] = {
     "OMPI_UNEXPECTED",
     "OMPI_OUT_OF_SEQUENCE",
     "OMPI_MATCH_TIME",
-    "OMPI_OOS_MATCH_TIME",
     "OMPI_UNEXPECTED_IN_QUEUE",
     "OMPI_OOS_IN_QUEUE",
     "OMPI_MAX_UNEXPECTED_IN_QUEUE",
@@ -172,7 +171,6 @@ OMPI_DECLSPEC const char *counter_descriptions[OMPI_NUM_COUNTERS] = {
     "The number of messages that arrived as unexpected messages.",
     "The number of messages that arrived out of the proper sequence.",
     "The number of microseconds spent matching unexpected messages.",
-    "The number of microseconds spent matching out of sequence messages.",
     "The number of messages that are currently in the unexpected message queue(s) of an MPI process.",
     "The number of messages that are currently in the out of sequence message queue(s) of an MPI process.",
     "The maximum number of messages that the unexpected message queue(s) within an MPI process contained at once since the last reset of this counter.  \
@@ -321,7 +319,7 @@ void ompi_spc_init()
          * ########################################################################
          */
         /* If this is a timer event, sent the corresponding timer_event entry to 1 */
-        if(i == OMPI_MATCH_TIME || i == OMPI_OOS_MATCH_TIME)
+        if(i == OMPI_MATCH_TIME)
             timer_event[i] = 1;
         else
             timer_event[i] = 0;
@@ -366,11 +364,19 @@ void ompi_spc_fini()
     if(!ompi_mpi_spc_dump_enabled)
         goto skip_dump;
 
-    int i, j, rank, world_size, offset;
+    int i, j, rank, world_size, offset, err;
     long long *recv_buffer, *send_buffer;
 
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    ompi_communicator_t *comm = &ompi_mpi_comm_world.comm;
+
+    rank = ompi_comm_rank(comm);
+    world_size = ompi_comm_size(comm);
+
+    /* Convert from cycles to usecs before sending */
+    for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
+        if(timer_event[i])
+            SPC_CYCLES_TO_USECS(&events[i].value);
+    }
 
     /* Aggregate all of the information on rank 0 using MPI_Gather on MPI_COMM_WORLD */
     if(rank == 0) {
@@ -379,13 +385,19 @@ void ompi_spc_fini()
         for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
             send_buffer[i] = events[i].value;
         }
-        MPI_Gather(send_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, recv_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+        err = comm->c_coll->coll_gather(send_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG,
+                                        recv_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG,
+                                        0, comm,
+                                        comm->c_coll->coll_gather_module);
     } else {
         send_buffer = (long long*)malloc(OMPI_NUM_COUNTERS * sizeof(long long));
         for(i = 0; i < OMPI_NUM_COUNTERS; i++) {
             send_buffer[i] = events[i].value;
         }
-        MPI_Gather(send_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, recv_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+        err = comm->c_coll->coll_gather(send_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG,
+                                        recv_buffer, OMPI_NUM_COUNTERS, MPI_LONG_LONG,
+                                        0, comm,
+                                        comm->c_coll->coll_gather_module);
     }
 
     /* Once rank 0 has all of the information, print the aggregated counter values for each rank in order */
@@ -399,8 +411,6 @@ void ompi_spc_fini()
                     /* If this is a timer-based counter, we need to covert from cycles to usecs */
                     if(recv_buffer[offset+i] == 0)
                         continue;
-                    if(timer_event[i])
-                        SPC_CYCLES_TO_USECS(&recv_buffer[offset+i]);
                     fprintf(stdout, "%s -> %lld\n", events[i].name, recv_buffer[offset+i]);
                 }
             }
@@ -417,13 +427,12 @@ void ompi_spc_fini()
         free(send_buffer);
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
+    comm->c_coll->coll_barrier(comm, comm->c_coll->coll_barrier_module);
  skip_dump:
     if(rank == 0)
         free(events);
 #else
-    int rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    int rank = ompi_comm_rank(&ompi_mpi_comm_world.comm);
     if(rank == 0)
         free(events);
 #endif

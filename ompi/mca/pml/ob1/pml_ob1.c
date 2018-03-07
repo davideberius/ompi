@@ -196,9 +196,6 @@ int mca_pml_ob1_add_comm(ompi_communicator_t* comm)
     mca_pml_ob1_recv_frag_t *frag, *next_frag;
     mca_pml_ob1_comm_proc_t* pml_proc;
     mca_pml_ob1_match_hdr_t* hdr;
-#if SPC_ENABLE == 1
-    opal_timer_t timer = 0;
-#endif
 
     if (NULL == pml_comm) {
         return OMPI_ERR_OUT_OF_RESOURCE;
@@ -254,8 +251,6 @@ int mca_pml_ob1_add_comm(ompi_communicator_t* comm)
             continue;
         }
 
-        SPC_TIMER_START(OMPI_OOS_MATCH_TIME, &timer);
-
         if (((uint16_t)hdr->hdr_seq) == ((uint16_t)pml_proc->expected_sequence) ) {
 
         add_fragment_to_unexpected:
@@ -281,7 +276,6 @@ int mca_pml_ob1_add_comm(ompi_communicator_t* comm)
             append_frag_to_ordered_list(&pml_proc->frags_cant_match, frag,
                                         pml_proc->expected_sequence);
         }
-        SPC_TIMER_STOP(OMPI_OOS_MATCH_TIME, &timer);
     }
     return OMPI_SUCCESS;
 }
