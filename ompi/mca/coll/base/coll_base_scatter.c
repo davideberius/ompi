@@ -31,6 +31,7 @@
 #include "ompi/mca/coll/base/coll_tags.h"
 #include "ompi/mca/pml/pml.h"
 #include "ompi/mca/coll/base/coll_base_functions.h"
+#include "ompi/runtime/ompi_spc.h"
 #include "coll_base_topo.h"
 #include "coll_base_util.h"
 
@@ -57,6 +58,8 @@ ompi_coll_base_scatter_intra_binomial( const void *sbuf, int scount,
 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "ompi_coll_base_scatter_intra_binomial rank %d", rank));
+
+    SPC_RECORD(OMPI_SPC_BASE_SCATTER_BINOMIAL, 1);
 
     /* create the binomial tree */
     COLL_BASE_UPDATE_IN_ORDER_BMTREE( comm, base_module, root );
@@ -211,6 +214,8 @@ ompi_coll_base_scatter_intra_basic_linear(const void *sbuf, int scount,
 
     rank = ompi_comm_rank(comm);
     size = ompi_comm_size(comm);
+
+    SPC_RECORD(OMPI_SPC_BASE_SCATTER_LINEAR, 1);
 
     /* If not root, receive data. */
 

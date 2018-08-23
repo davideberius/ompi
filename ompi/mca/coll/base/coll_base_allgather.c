@@ -31,6 +31,7 @@
 #include "ompi/mca/coll/coll.h"
 #include "ompi/mca/coll/base/coll_tags.h"
 #include "ompi/mca/coll/base/coll_base_functions.h"
+#include "ompi/runtime/ompi_spc.h"
 #include "coll_base_topo.h"
 #include "coll_base_util.h"
 
@@ -98,6 +99,8 @@ int ompi_coll_base_allgather_intra_bruck(const void *sbuf, int scount,
 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "coll:base:allgather_intra_bruck rank %d", rank));
+
+    SPC_RECORD(OMPI_SPC_BASE_ALLGATHER_BRUCK, 1);
 
     err = ompi_datatype_get_extent (sdtype, &slb, &sext);
     if (MPI_SUCCESS != err) { line = __LINE__; goto err_hndl; }
@@ -289,6 +292,8 @@ ompi_coll_base_allgather_intra_recursivedoubling(const void *sbuf, int scount,
                  "coll:base:allgather_intra_recursivedoubling rank %d, size %d",
                  rank, size));
 
+    SPC_RECORD(OMPI_SPC_BASE_ALLGATHER_RECURSIVE_DOUBLING, 1);
+
     err = ompi_datatype_get_extent (sdtype, &slb, &sext);
     if (MPI_SUCCESS != err) { line = __LINE__; goto err_hndl; }
 
@@ -377,6 +382,8 @@ int ompi_coll_base_allgather_intra_ring(const void *sbuf, int scount,
 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "coll:base:allgather_intra_ring rank %d", rank));
+
+    SPC_RECORD(OMPI_SPC_BASE_ALLGATHER_RING, 1);
 
     err = ompi_datatype_get_extent (sdtype, &slb, &sext);
     if (MPI_SUCCESS != err) { line = __LINE__; goto err_hndl; }
@@ -517,6 +524,8 @@ ompi_coll_base_allgather_intra_neighborexchange(const void *sbuf, int scount,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "coll:base:allgather_intra_neighborexchange rank %d", rank));
 
+    SPC_RECORD(OMPI_SPC_BASE_ALLGATHER_NEIGHBOR_EXCHANGE, 1);
+
     err = ompi_datatype_get_extent (sdtype, &slb, &sext);
     if (MPI_SUCCESS != err) { line = __LINE__; goto err_hndl; }
 
@@ -623,6 +632,8 @@ int ompi_coll_base_allgather_intra_two_procs(const void *sbuf, int scount,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "ompi_coll_base_allgather_intra_two_procs rank %d", rank));
 
+    SPC_RECORD(OMPI_SPC_BASE_ALLGATHER_TWO_PROCS, 1);
+
     if (2 != ompi_comm_size(comm)) {
         return MPI_ERR_UNSUPPORTED_OPERATION;
     }
@@ -703,6 +714,8 @@ ompi_coll_base_allgather_intra_basic_linear(const void *sbuf, int scount,
 {
     int err;
     ptrdiff_t lb, extent;
+
+    SPC_RECORD(OMPI_SPC_BASE_ALLGATHER_LINEAR, 1);
 
     /* Handle MPI_IN_PLACE (see explanantion in reduce.c for how to
        allocate temp buffer) -- note that rank 0 can use IN_PLACE
