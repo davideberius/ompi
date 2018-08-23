@@ -36,6 +36,7 @@
 #include "ompi/mca/pml/pml.h"
 #include "ompi/op/op.h"
 #include "ompi/mca/coll/base/coll_base_functions.h"
+#include "ompi/runtime/ompi_spc.h"
 #include "coll_base_topo.h"
 #include "coll_base_util.h"
 
@@ -62,6 +63,8 @@ ompi_coll_base_allreduce_intra_nonoverlapping(const void *sbuf, void *rbuf, int 
     rank = ompi_comm_rank(comm);
 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,"coll:base:allreduce_intra_nonoverlapping rank %d", rank));
+
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLREDUCE_NONOVERLAPPING, count * dtype->super.size, ompi_comm_size(comm));
 
     /* Reduce to 0 and broadcast. */
 
@@ -144,6 +147,8 @@ ompi_coll_base_allreduce_intra_recursivedoubling(const void *sbuf, void *rbuf,
 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "coll:base:allreduce_intra_recursivedoubling rank %d", rank));
+
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLREDUCE_RECURSIVE_DOUBLING, count * dtype->super.size, size);
 
     /* Special case for size == 1 */
     if (1 == size) {
@@ -357,6 +362,8 @@ ompi_coll_base_allreduce_intra_ring(const void *sbuf, void *rbuf, int count,
 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "coll:base:allreduce_intra_ring rank %d, count %d", rank, count));
+
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLREDUCE_RING, count * dtype->super.size, size);
 
     /* Special case for size == 1 */
     if (1 == size) {
@@ -637,6 +644,8 @@ ompi_coll_base_allreduce_intra_ring_segmented(const void *sbuf, void *rbuf, int 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "coll:base:allreduce_intra_ring_segmented rank %d, count %d", rank, count));
 
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLREDUCE_RING_SEGMENTED, count * dtype->super.size, size);
+
     /* Special case for size == 1 */
     if (1 == size) {
         if (MPI_IN_PLACE != sbuf) {
@@ -889,6 +898,8 @@ ompi_coll_base_allreduce_intra_basic_linear(const void *sbuf, void *rbuf, int co
     rank = ompi_comm_rank(comm);
 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,"coll:base:allreduce_intra_basic_linear rank %d", rank));
+
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLREDUCE_LINEAR, count * dtype->super.size, ompi_comm_size(comm));
 
     /* Reduce to 0 and broadcast. */
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018      The University of Tennessee and The University
+ * Copyright (c) 2019      The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  * Copyright (c) 2018      Research Organization for Information Science
@@ -18,7 +18,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <sys/stat.h> /* For mode constants */
+#include <fcntl.h>    /* For O_* constants */
+#include <limits.h>
 
 #include "ompi/communicator/communicator.h"
 #include "ompi/datatype/ompi_datatype.h"
@@ -28,6 +33,13 @@
 #include "opal/util/argv.h"
 #include "opal/util/show_help.h"
 #include "opal/util/output.h"
+#include "opal/mca/shmem/base/base.h"
+#include "opal/mca/pmix/pmix.h"
+
+#define PAGE_SIZE 4096 /* The number of bytes in a page.  TODO: This should be found programatically */
+#define CACHE_LINE 8 /* The number of bytes in a cache line. TODO: This should be found programatically */
+#define SPC_MAX_FILENAME PATH_MAX /* The maximum length allowed for the spc file strings */
+#define SPC_SHM_DIR "/dev/shm" /* The default directory for shared memory files */
 
 #include MCA_timer_IMPLEMENTATION_HEADER
 
@@ -155,13 +167,64 @@ typedef enum ompi_spc_counters {
     OMPI_SPC_BYTES_GET,
     OMPI_SPC_UNEXPECTED,
     OMPI_SPC_OUT_OF_SEQUENCE,
+    OMPI_SPC_OOS_QUEUE_HOPS,
     OMPI_SPC_MATCH_TIME,
+    OMPI_SPC_MATCH_QUEUE_TIME,
     OMPI_SPC_UNEXPECTED_IN_QUEUE,
     OMPI_SPC_OOS_IN_QUEUE,
     OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE,
     OMPI_SPC_MAX_OOS_IN_QUEUE,
+    OMPI_SPC_BASE_BCAST_LINEAR,
+    OMPI_SPC_BASE_BCAST_CHAIN,
+    OMPI_SPC_BASE_BCAST_PIPELINE,
+    OMPI_SPC_BASE_BCAST_SPLIT_BINTREE,
+    OMPI_SPC_BASE_BCAST_BINTREE,
+    OMPI_SPC_BASE_BCAST_BINOMIAL,
+    OMPI_SPC_BASE_REDUCE_CHAIN,
+    OMPI_SPC_BASE_REDUCE_PIPELINE,
+    OMPI_SPC_BASE_REDUCE_BINARY,
+    OMPI_SPC_BASE_REDUCE_BINOMIAL,
+    OMPI_SPC_BASE_REDUCE_IN_ORDER_BINTREE,
+    OMPI_SPC_BASE_REDUCE_LINEAR,
+    OMPI_SPC_BASE_REDUCE_SCATTER_NONOVERLAPPING,
+    OMPI_SPC_BASE_REDUCE_SCATTER_RECURSIVE_HALVING,
+    OMPI_SPC_BASE_REDUCE_SCATTER_RING,
+    OMPI_SPC_BASE_ALLREDUCE_NONOVERLAPPING,
+    OMPI_SPC_BASE_ALLREDUCE_RECURSIVE_DOUBLING,
+    OMPI_SPC_BASE_ALLREDUCE_RING,
+    OMPI_SPC_BASE_ALLREDUCE_RING_SEGMENTED,
+    OMPI_SPC_BASE_ALLREDUCE_LINEAR,
+    OMPI_SPC_BASE_SCATTER_BINOMIAL,
+    OMPI_SPC_BASE_SCATTER_LINEAR,
+    OMPI_SPC_BASE_GATHER_BINOMIAL,
+    OMPI_SPC_BASE_GATHER_LINEAR_SYNC,
+    OMPI_SPC_BASE_GATHER_LINEAR,
+    OMPI_SPC_BASE_ALLTOALL_INPLACE,
+    OMPI_SPC_BASE_ALLTOALL_PAIRWISE,
+    OMPI_SPC_BASE_ALLTOALL_BRUCK,
+    OMPI_SPC_BASE_ALLTOALL_LINEAR_SYNC,
+    OMPI_SPC_BASE_ALLTOALL_TWO_PROCS,
+    OMPI_SPC_BASE_ALLTOALL_LINEAR,
+    OMPI_SPC_BASE_ALLGATHER_BRUCK,
+    OMPI_SPC_BASE_ALLGATHER_RECURSIVE_DOUBLING,
+    OMPI_SPC_BASE_ALLGATHER_RING,
+    OMPI_SPC_BASE_ALLGATHER_NEIGHBOR_EXCHANGE,
+    OMPI_SPC_BASE_ALLGATHER_TWO_PROCS,
+    OMPI_SPC_BASE_ALLGATHER_LINEAR,
+    OMPI_SPC_BASE_BARRIER_DOUBLE_RING,
+    OMPI_SPC_BASE_BARRIER_RECURSIVE_DOUBLING,
+    OMPI_SPC_BASE_BARRIER_BRUCK,
+    OMPI_SPC_BASE_BARRIER_TWO_PROCS,
+    OMPI_SPC_BASE_BARRIER_LINEAR,
+    OMPI_SPC_BASE_BARRIER_TREE,
+    OMPI_SPC_P2P_MESSAGE_SIZE,
+    OMPI_SPC_EAGER_MESSAGES,
+    OMPI_SPC_NOT_EAGER_MESSAGES,
+    OMPI_SPC_QUEUE_ALLOCATION,
     OMPI_SPC_NUM_COUNTERS /* This serves as the number of counters.  It must be last. */
 } ompi_spc_counters_t;
+
+extern uint32_t ompi_spc_attached_event[];
 
 /* There is currently no support for atomics on long long values so we will default to
  * size_t for now until support for such atomics is implemented.
@@ -169,10 +232,19 @@ typedef enum ompi_spc_counters {
 typedef opal_atomic_size_t ompi_spc_value_t;
 
 /* A structure for storing the event data */
-typedef struct ompi_spc_s{
+typedef struct ompi_spc_s {
     char *name;
     ompi_spc_value_t value;
+    int *bin_rules; /* The first element is the number of bins, the rest represent when each bin starts */
+    ompi_spc_value_t *bins;
 } ompi_spc_t;
+
+/* A structure for indexing into the event data */
+typedef struct ompi_spc_offset_s {
+    int num_bins;
+    int rules_offset;
+    int bins_offset;
+} ompi_spc_offset_t;
 
 /* Events data structure initialization function */
 void ompi_spc_events_init(void);
@@ -181,11 +253,15 @@ void ompi_spc_events_init(void);
 void ompi_spc_init(void);
 void ompi_spc_fini(void);
 void ompi_spc_record(unsigned int event_id, ompi_spc_value_t value);
+void ompi_spc_bin_record(unsigned int event_id, ompi_spc_value_t value);
+void ompi_spc_collective_bin_record(unsigned int event_id, ompi_spc_value_t bytes, ompi_spc_value_t procs);
 void ompi_spc_timer_start(unsigned int event_id, opal_timer_t *cycles);
 void ompi_spc_timer_stop(unsigned int event_id, opal_timer_t *cycles);
 void ompi_spc_user_or_mpi(int tag, ompi_spc_value_t value, unsigned int user_enum, unsigned int mpi_enum);
 void ompi_spc_cycles_to_usecs(ompi_spc_value_t *cycles);
 void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_enum);
+ompi_spc_value_t ompi_spc_get_value(unsigned int event_id);
+bool IS_SPC_BIT_SET(uint32_t* array, int32_t pos);
 
 /* Macros for using the SPC utility functions throughout the codebase.
  * If SPC_ENABLE is not 1, the macros become no-ops.
@@ -199,22 +275,38 @@ void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_e
     ompi_spc_fini()
 
 #define SPC_RECORD(event_id, value)  \
-    ompi_spc_record(event_id, value)
+    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) \
+        ompi_spc_record(event_id, value)
+
+#define SPC_BIN_RECORD(event_id, value)  \
+    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) \
+        ompi_spc_bin_record(event_id, value)
+
+#define SPC_COLL_BIN_RECORD(event_id, bytes, procs)   \
+    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) \
+        ompi_spc_collective_bin_record(event_id, bytes, procs)
 
 #define SPC_TIMER_START(event_id, usec)  \
-    ompi_spc_timer_start(event_id, usec)
+    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) \
+        ompi_spc_timer_start(event_id, usec)
 
 #define SPC_TIMER_STOP(event_id, usec)  \
-    ompi_spc_timer_stop(event_id, usec)
+    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) \
+        ompi_spc_timer_stop(event_id, usec)
 
 #define SPC_USER_OR_MPI(tag, value, enum_if_user, enum_if_mpi) \
-    ompi_spc_user_or_mpi(tag, value, enum_if_user, enum_if_mpi)
+    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, enum_if_user) && IS_SPC_BIT_SET(ompi_spc_attached_event, enum_if_mpi)) ) \
+        ompi_spc_user_or_mpi(tag, value, enum_if_user, enum_if_mpi)
 
 #define SPC_CYCLES_TO_USECS(cycles) \
     ompi_spc_cycles_to_usecs(cycles)
 
 #define SPC_UPDATE_WATERMARK(watermark_enum, value_enum) \
-    ompi_spc_update_watermark(watermark_enum, value_enum)
+    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, watermark_enum) && IS_SPC_BIT_SET(ompi_spc_attached_event, value_enum)) ) \
+        ompi_spc_update_watermark(watermark_enum, value_enum)
+
+#define SPC_GET(event_id)  \
+    ompi_spc_get_value(event_id)
 
 #else /* SPCs are not enabled */
 
@@ -227,6 +319,12 @@ void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_e
 #define SPC_RECORD(event_id, value)  \
     ((void)0)
 
+#define SPC_BIN_RECORD(event_id, value)  \
+    ((void)0)
+
+#define SPC_COLL_BIN_RECORD(event_id, bytes, procs)        \
+    ((void)0)
+
 #define SPC_TIMER_START(event_id, usec)  \
     ((void)0)
 
@@ -240,6 +338,9 @@ void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_e
     ((void)0)
 
 #define SPC_UPDATE_WATERMARK(watermark_enum, value_enum) \
+    ((void)0)
+
+#define SPC_GET(event_id)  \
     ((void)0)
 
 #endif

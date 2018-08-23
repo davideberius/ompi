@@ -3,7 +3,7 @@
  * Copyright (c) 2004-2005 The Trustees of Indiana University and Indiana
  *                         University Research and Technology
  *                         Corporation.  All rights reserved.
- * Copyright (c) 2004-2018 The University of Tennessee and The University
+ * Copyright (c) 2004-2019 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  * Copyright (c) 2004-2005 High Performance Computing Center Stuttgart,
@@ -149,10 +149,47 @@ OMPI_DECLSPEC extern bool ompi_async_mpi_finalize;
 OMPI_DECLSPEC extern char * ompi_mpi_spc_attach_string;
 
 /**
+ * A string to append to the SPC XML files for using the mmap interface.
+ * This is to make the filename easier to identify.
+ */
+OMPI_DECLSPEC extern char * ompi_mpi_spc_xml_string;
+
+/**
  * A boolean value that determines whether or not to dump the SPC counter
  * values in MPI_Finalize.  A value of true dumps the counters and false does not.
  */
 OMPI_DECLSPEC extern bool ompi_mpi_spc_dump_enabled;
+
+/**
+ * A boolean value that determines whether or not to dump the SPC counter
+ * values in an mmap'd file during execution.  A value of true dumps the
+ * counters and false does not.
+ */
+OMPI_DECLSPEC extern bool ompi_mpi_spc_mmap_enabled;
+
+/**
+ * An integer value that denotes the time period between snapshots with the
+ * SPC mmap interface.
+ */
+OMPI_DECLSPEC extern int ompi_mpi_spc_snapshot_period;
+
+/**
+ * An integer value that denotes the boundary at which a message is qualified
+ * as a small/large message for the point to point message counter.
+ */
+OMPI_DECLSPEC extern int ompi_mpi_spc_p2p_message_boundary;
+
+/**
+ * An integer value that denotes the boundary at which a message is qualified
+ * as a small/large message for collective bin counters.
+ */
+OMPI_DECLSPEC extern int ompi_mpi_spc_collective_message_boundary;
+
+/**
+ * An integer value that denotes the boundary at which a communicator is qualified
+ * as a small/large communicator for collective bin counters.
+ */
+OMPI_DECLSPEC extern int ompi_mpi_spc_collective_comm_boundary;
 
 
 /**
