@@ -35,6 +35,7 @@
 #include "ompi/mca/pml/pml.h"
 #include "ompi/op/op.h"
 #include "ompi/mca/coll/base/coll_base_functions.h"
+#include "ompi/runtime/ompi_spc.h"
 #include "coll_base_topo.h"
 #include "coll_base_util.h"
 
@@ -57,6 +58,8 @@ int ompi_coll_base_reduce_scatter_intra_nonoverlapping(const void *sbuf, void *r
 
     rank = ompi_comm_rank(comm);
     size = ompi_comm_size(comm);
+
+    SPC_RECORD(OMPI_SPC_BASE_REDUCE_SCATTER_NONOVERLAPPING, 1);
 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,"coll:base:reduce_scatter_intra_nonoverlapping, rank %d", rank));
 
@@ -146,6 +149,8 @@ ompi_coll_base_reduce_scatter_intra_basic_recursivehalving( const void *sbuf,
     /* Initialize */
     rank = ompi_comm_rank(comm);
     size = ompi_comm_size(comm);
+
+    SPC_RECORD(OMPI_SPC_BASE_REDUCE_SCATTER_RECURSIVE_HALVING, 1);
 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,"coll:base:reduce_scatter_intra_basic_recursivehalving, rank %d", rank));
 
@@ -468,6 +473,8 @@ ompi_coll_base_reduce_scatter_intra_ring( const void *sbuf, void *rbuf, const in
 
     size = ompi_comm_size(comm);
     rank = ompi_comm_rank(comm);
+
+    SPC_RECORD(OMPI_SPC_BASE_REDUCE_SCATTER_RING, 1);
 
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "coll:base:reduce_scatter_intra_ring rank %d, size %d",
