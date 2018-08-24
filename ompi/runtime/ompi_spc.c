@@ -321,10 +321,7 @@ void ompi_spc_init(void)
             }
         }
 
-        /* ########################################################################
-         * ################## Add Timer-Based Counter Enums Here ##################
-         * ########################################################################
-         */
+        /* Set all timer event bits to 0 by default */
         CLEAR_SPC_BIT(ompi_spc_timer_event, i);
 
         /* Registers the current counter as an MPI_T pvar regardless of whether it's been turned on or not */
@@ -341,13 +338,16 @@ void ompi_spc_init(void)
                 mpi_t_offset = ret;
             }
         }
-        if( (ret < 0) || (ret != (mpi_t_offset + found - 1)) ) {
+        if( (ret < 0) || (all_on && (ret != (mpi_t_offset + found - 1))) ) {
             mpi_t_enabled = false;
             opal_show_help("help-mpi-runtime.txt", "spc: MPI_T disabled", true);
             break;
         }
     }
-    /* If this is a timer event, sent the corresponding timer_event entry to 1 */
+    /* ########################################################################
+     * ################## Add Timer-Based Counter Enums Here ##################
+     * ########################################################################
+     */
     SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_MATCH_TIME);
     opal_argv_free(arg_strings);
 }
