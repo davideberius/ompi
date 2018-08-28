@@ -335,6 +335,7 @@ check_cantmatch_for_match(mca_pml_ob1_comm_proc_t *proc)
     mca_pml_ob1_recv_frag_t *frag = proc->frags_cant_match;
 
     if( (NULL != frag) && (frag->hdr.hdr_match.hdr_seq == proc->expected_sequence) ) {
+        SPC_RECORD(OMPI_SPC_OOS_IN_QUEUE, -1);
         return remove_head_from_ordered_list(&proc->frags_cant_match);
     }
     return NULL;
@@ -409,6 +410,8 @@ void mca_pml_ob1_recv_frag_callback_match(mca_btl_base_module_t* btl,
             MCA_PML_OB1_RECV_FRAG_INIT(frag, hdr, segments, num_segments, btl);
             append_frag_to_ordered_list(&proc->frags_cant_match, frag, proc->expected_sequence);
             SPC_RECORD(OMPI_SPC_OUT_OF_SEQUENCE, 1);
+            SPC_RECORD(OMPI_SPC_OOS_IN_QUEUE, 1);
+            SPC_UPDATE_WATERMARK(OMPI_SPC_MAX_OOS_IN_QUEUE, OMPI_SPC_OOS_IN_QUEUE);
             OB1_MATCHING_UNLOCK(&comm->matching_lock);
             return;
         }
