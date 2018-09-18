@@ -144,6 +144,7 @@ append_frag_to_ordered_list(mca_pml_ob1_recv_frag_t** queue,
             d1 = d2;
             prior = (mca_pml_ob1_recv_frag_t*)(prior->super.super.opal_list_prev);
             d2 = prior->hdr.hdr_match.hdr_seq - hdr->hdr_seq;
+            SPC_RECORD(OMPI_SPC_OOS_QUEUE_HOPS, 1);
         } while( (hdr->hdr_seq < prior->hdr.hdr_match.hdr_seq) &&
                  (d1 > d2) && (prior != *queue) );
     } else {
@@ -151,6 +152,7 @@ append_frag_to_ordered_list(mca_pml_ob1_recv_frag_t** queue,
         next_seq = ((mca_pml_ob1_recv_frag_t*)(prior->super.super.opal_list_next))->hdr.hdr_match.hdr_seq;
         /* prevent rollover */
         while( (hdr->hdr_seq > prior_seq) && (hdr->hdr_seq > next_seq) && (prior_seq < next_seq) ) {
+            SPC_RECORD(OMPI_SPC_OOS_QUEUE_HOPS, 1);
             prior_seq = next_seq;
             prior = (mca_pml_ob1_recv_frag_t*)(prior->super.super.opal_list_next);
             next_seq = ((mca_pml_ob1_recv_frag_t*)(prior->super.super.opal_list_next))->hdr.hdr_match.hdr_seq;

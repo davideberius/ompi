@@ -155,6 +155,7 @@ typedef enum ompi_spc_counters {
     OMPI_SPC_BYTES_GET,
     OMPI_SPC_UNEXPECTED,
     OMPI_SPC_OUT_OF_SEQUENCE,
+    OMPI_SPC_OOS_QUEUE_HOPS,
     OMPI_SPC_MATCH_TIME,
     OMPI_SPC_UNEXPECTED_IN_QUEUE,
     OMPI_SPC_OOS_IN_QUEUE,
@@ -203,6 +204,9 @@ typedef enum ompi_spc_counters {
     OMPI_SPC_BASE_BARRIER_TWO_PROCS,
     OMPI_SPC_BASE_BARRIER_LINEAR,
     OMPI_SPC_BASE_BARRIER_TREE,
+    OMPI_SPC_P2P_MESSAGE_SIZE,
+    OMPI_SPC_EAGER_MESSAGES,
+    OMPI_SPC_NOT_EAGER_MESSAGES,
     OMPI_SPC_NUM_COUNTERS /* This serves as the number of counters.  It must be last. */
 } ompi_spc_counters_t;
 
@@ -215,6 +219,8 @@ typedef opal_atomic_size_t ompi_spc_value_t;
 typedef struct ompi_spc_s{
     char *name;
     ompi_spc_value_t value;
+    int *bin_rules; /* The first element is the number of bins, the rest represent when each bin starts */
+    ompi_spc_value_t *bins;
 } ompi_spc_t;
 
 /* Events data structure initialization function */
@@ -224,6 +230,8 @@ void ompi_spc_events_init(void);
 void ompi_spc_init(void);
 void ompi_spc_fini(void);
 void ompi_spc_record(unsigned int event_id, ompi_spc_value_t value);
+void ompi_spc_bin_record(unsigned int event_id, ompi_spc_value_t value);
+void ompi_spc_collective_bin_record(unsigned int event_id, ompi_spc_value_t bytes, ompi_spc_value_t procs);
 void ompi_spc_timer_start(unsigned int event_id, opal_timer_t *cycles);
 void ompi_spc_timer_stop(unsigned int event_id, opal_timer_t *cycles);
 void ompi_spc_user_or_mpi(int tag, ompi_spc_value_t value, unsigned int user_enum, unsigned int mpi_enum);
@@ -243,6 +251,12 @@ void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_e
 
 #define SPC_RECORD(event_id, value)  \
     ompi_spc_record(event_id, value)
+
+#define SPC_BIN_RECORD(event_id, value)  \
+    ompi_spc_bin_record(event_id, value)
+
+#define SPC_COLL_BIN_RECORD(event_id, bytes, procs)   \
+    ompi_spc_collective_bin_record(event_id, bytes, procs)
 
 #define SPC_TIMER_START(event_id, usec)  \
     ompi_spc_timer_start(event_id, usec)
@@ -268,6 +282,12 @@ void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_e
     ((void)0)
 
 #define SPC_RECORD(event_id, value)  \
+    ((void)0)
+
+#define SPC_BIN_RECORD(event_id, value)  \
+    ((void)0)
+
+#define SPC_COLL_BIN_RECORD(event_id, bytes, procs)        \
     ((void)0)
 
 #define SPC_TIMER_START(event_id, usec)  \
