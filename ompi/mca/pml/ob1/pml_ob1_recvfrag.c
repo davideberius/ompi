@@ -867,6 +867,11 @@ match_one(mca_btl_base_module_t *btl,
             return match;
         }
 
+#if SPC_ENABLE == 1
+    opal_timer_t queue_timer = 0;
+#endif
+    SPC_TIMER_START(OMPI_SPC_MATCH_QUEUE_TIME, &queue_timer);
+
         /* if no match found, place on unexpected queue */
 #if MCA_PML_OB1_CUSTOM_MATCH
         append_frag_to_umq(comm->umq, btl, hdr, segments,
@@ -875,6 +880,8 @@ match_one(mca_btl_base_module_t *btl,
         append_frag_to_list(&proc->unexpected_frags, btl, hdr, segments,
                             num_segments, frag);
 #endif
+        SPC_TIMER_STOP(OMPI_SPC_MATCH_QUEUE_TIME, &queue_timer);
+
         SPC_RECORD(OMPI_SPC_UNEXPECTED, 1);
         SPC_RECORD(OMPI_SPC_UNEXPECTED_IN_QUEUE, 1);
         SPC_UPDATE_WATERMARK(OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE, OMPI_SPC_UNEXPECTED_IN_QUEUE);

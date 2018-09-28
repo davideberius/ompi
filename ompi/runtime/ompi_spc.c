@@ -138,6 +138,7 @@ static ompi_spc_event_t ompi_spc_events_names[OMPI_SPC_NUM_COUNTERS] = {
     SET_COUNTER_ARRAY(OMPI_SPC_OUT_OF_SEQUENCE, "The number of messages that arrived out of the proper sequence."),
     SET_COUNTER_ARRAY(OMPI_SPC_OOS_QUEUE_HOPS, "The number of times we jumped to the next element in the out of sequence message queue's ordered list."),
     SET_COUNTER_ARRAY(OMPI_SPC_MATCH_TIME, "The number of microseconds spent matching unexpected messages.  Note: The timer used on the back end is in cycles, which could potentially be problematic on a system where the clock frequency can change.  On such a system, this counter could be inaccurate since we assume a fixed clock rate."),
+    SET_COUNTER_ARRAY(OMPI_SPC_MATCH_QUEUE_TIME, "The number of microseconds spent inserting unexpected messages into the unexpected message queue.  Note: The timer used on the back end is in cycles, which could potentially be problematic on a system where the clock frequency can change.  On such a system, this counter could be inaccurate since we assume a fixed clock rate."),
     SET_COUNTER_ARRAY(OMPI_SPC_UNEXPECTED_IN_QUEUE, "The number of messages that are currently in the unexpected message queue(s) of an MPI process."),
     SET_COUNTER_ARRAY(OMPI_SPC_OOS_IN_QUEUE, "The number of messages that are currently in the out of sequence message queue(s) of an MPI process."),
     SET_COUNTER_ARRAY(OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE, "The maximum number of messages that the unexpected message queue(s) within an MPI process "
@@ -404,6 +405,7 @@ void ompi_spc_init(void)
      * ########################################################################
      */
     SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_MATCH_TIME);
+    SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_MATCH_QUEUE_TIME);
 
     /* ########################################################################
      * ################### Add Bin-Based Counter Enums Here ###################
