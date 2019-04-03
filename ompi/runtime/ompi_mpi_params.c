@@ -77,6 +77,7 @@ bool ompi_mpi_dynamics_enabled = true;
 
 char *ompi_mpi_spc_attach_string = NULL;
 bool ompi_mpi_spc_dump_enabled = false;
+bool ompi_mpi_spc_mmap_enabled = false;
 
 static bool show_default_mca_params = false;
 static bool show_file_mca_params = false;
@@ -339,6 +340,14 @@ int ompi_mpi_register_params(void)
                                  OPAL_INFO_LVL_4,
                                  MCA_BASE_VAR_SCOPE_READONLY,
                                  &ompi_mpi_spc_dump_enabled);
+
+    ompi_mpi_spc_mmap_enabled = false;
+    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_mmap_enabled",
+                                 "A boolean value for whether (true) or not (false) to enable dumping SPC counters to an mmap'd file.",
+                                 MCA_BASE_VAR_TYPE_BOOL, NULL, 0, 0,
+                                 OPAL_INFO_LVL_4,
+                                 MCA_BASE_VAR_SCOPE_READONLY,
+                                 &ompi_mpi_spc_mmap_enabled);
 
     return OMPI_SUCCESS;
 }

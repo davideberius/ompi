@@ -400,7 +400,8 @@ int ompi_coll_base_reduce_intra_chain( const void *sendbuf, void *recvbuf, int c
     ompi_datatype_type_size( datatype, &typelng );
     COLL_BASE_COMPUTED_SEGCOUNT( segsize, typelng, segcount );
 
-    SPC_RECORD(OMPI_SPC_BASE_REDUCE_CHAIN, 1);
+    //SPC_RECORD(OMPI_SPC_BASE_REDUCE_CHAIN, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_REDUCE_CHAIN, count * datatype->super.size, ompi_comm_size(comm));
 
     return ompi_coll_base_reduce_generic( sendbuf, recvbuf, count, datatype,
                                            op, root, comm, module,
@@ -434,7 +435,8 @@ int ompi_coll_base_reduce_intra_pipeline( const void *sendbuf, void *recvbuf,
     ompi_datatype_type_size( datatype, &typelng );
     COLL_BASE_COMPUTED_SEGCOUNT( segsize, typelng, segcount );
 
-    SPC_RECORD(OMPI_SPC_BASE_REDUCE_PIPELINE, 1);
+    //SPC_RECORD(OMPI_SPC_BASE_REDUCE_PIPELINE, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_REDUCE_PIPELINE, count * datatype->super.size, ompi_comm_size(comm));
 
     return ompi_coll_base_reduce_generic( sendbuf, recvbuf, count, datatype,
                                            op, root, comm, module,
@@ -467,7 +469,8 @@ int ompi_coll_base_reduce_intra_binary( const void *sendbuf, void *recvbuf,
     ompi_datatype_type_size( datatype, &typelng );
     COLL_BASE_COMPUTED_SEGCOUNT( segsize, typelng, segcount );
 
-    SPC_RECORD(OMPI_SPC_BASE_REDUCE_BINARY, 1);
+    //SPC_RECORD(OMPI_SPC_BASE_REDUCE_BINARY, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_REDUCE_BINARY, count * datatype->super.size, ompi_comm_size(comm));
 
     return ompi_coll_base_reduce_generic( sendbuf, recvbuf, count, datatype,
                                            op, root, comm, module,
@@ -500,7 +503,8 @@ int ompi_coll_base_reduce_intra_binomial( const void *sendbuf, void *recvbuf,
     ompi_datatype_type_size( datatype, &typelng );
     COLL_BASE_COMPUTED_SEGCOUNT( segsize, typelng, segcount );
 
-    SPC_RECORD(OMPI_SPC_BASE_REDUCE_BINOMIAL, 1);
+    //SPC_RECORD(OMPI_SPC_BASE_REDUCE_BINOMIAL, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_REDUCE_BINOMIAL, count * datatype->super.size, ompi_comm_size(comm));
 
     return ompi_coll_base_reduce_generic( sendbuf, recvbuf, count, datatype,
                                            op, root, comm, module,
@@ -539,7 +543,8 @@ int ompi_coll_base_reduce_intra_in_order_binary( const void *sendbuf, void *recv
 
     COLL_BASE_UPDATE_IN_ORDER_BINTREE( comm, base_module );
 
-    SPC_RECORD(OMPI_SPC_BASE_REDUCE_IN_ORDER_BINTREE, 1);
+    //SPC_RECORD(OMPI_SPC_BASE_REDUCE_IN_ORDER_BINTREE, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_REDUCE_IN_ORDER_BINTREE, count * datatype->super.size, size);
 
     /**
      * Determine number of segments and number of elements
@@ -654,7 +659,8 @@ ompi_coll_base_reduce_intra_basic_linear(const void *sbuf, void *rbuf, int count
     rank = ompi_comm_rank(comm);
     size = ompi_comm_size(comm);
 
-    SPC_RECORD(OMPI_SPC_BASE_REDUCE_LINEAR, 1);
+    //SPC_RECORD(OMPI_SPC_BASE_REDUCE_LINEAR, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_REDUCE_LINEAR, count * dtype->super.size, size);
 
     /* If not root, send data to the root. */
 

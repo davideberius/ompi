@@ -812,7 +812,8 @@ match_one(mca_btl_base_module_t *btl,
           mca_pml_ob1_recv_frag_t* frag)
 {
 #if SPC_ENABLE == 1
-    opal_timer_t timer = 0;
+    opal_timer_t timer;
+    timer = 0;
 #endif
     SPC_TIMER_START(OMPI_SPC_MATCH_TIME, &timer);
 
@@ -866,6 +867,7 @@ match_one(mca_btl_base_module_t *btl,
             SPC_TIMER_STOP(OMPI_SPC_MATCH_TIME, &timer);
             return match;
         }
+        SPC_TIMER_STOP(OMPI_SPC_MATCH_TIME, &timer);
 
 #if SPC_ENABLE == 1
     opal_timer_t queue_timer = 0;
@@ -887,7 +889,6 @@ match_one(mca_btl_base_module_t *btl,
         SPC_UPDATE_WATERMARK(OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE, OMPI_SPC_UNEXPECTED_IN_QUEUE);
         PERUSE_TRACE_MSG_EVENT(PERUSE_COMM_MSG_INSERT_IN_UNEX_Q, comm_ptr,
                                hdr->hdr_src, hdr->hdr_tag, PERUSE_RECV);
-        SPC_TIMER_STOP(OMPI_SPC_MATCH_TIME, &timer);
         return NULL;
     } while(true);
 }

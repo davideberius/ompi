@@ -28,7 +28,8 @@ headers += \
 	runtime/ompi_cr.h \
         runtime/params.h \
 	runtime/ompi_info_support.h \
-	runtime/ompi_spc.h
+	runtime/ompi_spc.h \
+	runtime/papi_sde_interface.h
 
 lib@OMPI_LIBMPI_NAME@_la_SOURCES += \
         runtime/ompi_mpi_abort.c \
@@ -49,3 +50,4 @@ libompi_mpir_la_SOURCES = \
 libompi_mpir_la_CFLAGS = $(MPIR_UNWIND_CFLAGS)
 
 lib@OMPI_LIBMPI_NAME@_la_LIBADD += libompi_mpir.la
+

@@ -18,7 +18,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <sys/stat.h> /* For mode constants */
+#include <fcntl.h>    /* For O_* constants */
 
 #include "ompi/communicator/communicator.h"
 #include "ompi/datatype/ompi_datatype.h"
@@ -28,6 +32,11 @@
 #include "opal/util/argv.h"
 #include "opal/util/show_help.h"
 #include "opal/util/output.h"
+#include "opal/mca/shmem/base/base.h"
+#include "opal/mca/pmix/pmix.h"
+
+#define PAGE_SIZE 4096 /* The number of bytes in a page.  TODO: This should be found programatically */
+#define CACHE_LINE 8 /* The number of bytes in a cache line. TODO: This should be found programatically */
 
 #include MCA_timer_IMPLEMENTATION_HEADER
 
@@ -208,6 +217,7 @@ typedef enum ompi_spc_counters {
     OMPI_SPC_P2P_MESSAGE_SIZE,
     OMPI_SPC_EAGER_MESSAGES,
     OMPI_SPC_NOT_EAGER_MESSAGES,
+    OMPI_SPC_QUEUE_ALLOCATION,
     OMPI_SPC_NUM_COUNTERS /* This serves as the number of counters.  It must be last. */
 } ompi_spc_counters_t;
 
@@ -217,12 +227,19 @@ typedef enum ompi_spc_counters {
 typedef opal_atomic_size_t ompi_spc_value_t;
 
 /* A structure for storing the event data */
-typedef struct ompi_spc_s{
+typedef struct ompi_spc_s {
     char *name;
     ompi_spc_value_t value;
     int *bin_rules; /* The first element is the number of bins, the rest represent when each bin starts */
     ompi_spc_value_t *bins;
 } ompi_spc_t;
+
+/* A structure for indexing into the event data */
+typedef struct ompi_spc_offset_s {
+    int num_bins;
+    int rules_offset;
+    int bins_offset;
+} ompi_spc_offset_t;
 
 /* Events data structure initialization function */
 void ompi_spc_events_init(void);
@@ -238,6 +255,7 @@ void ompi_spc_timer_stop(unsigned int event_id, opal_timer_t *cycles);
 void ompi_spc_user_or_mpi(int tag, ompi_spc_value_t value, unsigned int user_enum, unsigned int mpi_enum);
 void ompi_spc_cycles_to_usecs(ompi_spc_value_t *cycles);
 void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_enum);
+ompi_spc_value_t ompi_spc_get_value(unsigned int event_id);
 
 /* Macros for using the SPC utility functions throughout the codebase.
  * If SPC_ENABLE is not 1, the macros become no-ops.
@@ -274,6 +292,9 @@ void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_e
 #define SPC_UPDATE_WATERMARK(watermark_enum, value_enum) \
     ompi_spc_update_watermark(watermark_enum, value_enum)
 
+#define SPC_GET(event_id)  \
+    ompi_spc_get_value(event_id)
+
 #else /* SPCs are not enabled */
 
 #define SPC_INIT()  \
@@ -304,6 +325,9 @@ void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_e
     ((void)0)
 
 #define SPC_UPDATE_WATERMARK(watermark_enum, value_enum) \
+    ((void)0)
+
+#define SPC_GET(event_id)  \
     ((void)0)
 
 #endif

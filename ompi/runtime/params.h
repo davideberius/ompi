@@ -154,6 +154,13 @@ OMPI_DECLSPEC extern char * ompi_mpi_spc_attach_string;
  */
 OMPI_DECLSPEC extern bool ompi_mpi_spc_dump_enabled;
 
+/**
+ * A boolean value that determines whether or not to dump the SPC counter
+ * values in an mmap'd file during execution.  A value of true dumps the
+ * counters and false does not.
+ */
+OMPI_DECLSPEC extern bool ompi_mpi_spc_mmap_enabled;
+
 
 /**
  * Register MCA parameters used by the MPI layer.

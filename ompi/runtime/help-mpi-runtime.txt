@@ -119,3 +119,25 @@ Aborting...
 There was an error registering software performance counters (SPCs) as
 MPI_T performance variables.  Your job will continue, but SPCs will be
 disabled for MPI_T.
+#
+[spc: /dev/shm failed]
+Failed to access '/dev/shm', falling back to storing the shared memory
+file in '%s'.
+#
+[spc: filename creation failure]
+Failed to create an appropriate filename for use in storing data in a
+shared memory file.
+#
+[spc: shm segment creation failure]
+Failed to create a shared memory segment.
+#
+[spc: shm atttach failure]
+Failed to attach to created shared memory segment.
+#
+[spc: shm file open failure]
+Failed to open shared memory file: '%s'.
+#
+[spc: mmap failure]
+Failed to mmap the shared memory file.  mmap had the following error:
+'%s'.  You will be unable to read counters through attaching to the
+shared memory file.

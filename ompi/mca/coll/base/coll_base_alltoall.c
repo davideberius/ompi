@@ -54,7 +54,7 @@ mca_coll_base_alltoall_intra_basic_inplace(const void *rbuf, int rcount,
     size = ompi_comm_size(comm);
     rank = ompi_comm_rank(comm);
 
-    SPC_RECORD(OMPI_SPC_BASE_ALLTOALL_INPLACE, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLTOALL_INPLACE, rcount * rdtype->super.size, size);
 
     /* If only one process, we're done. */
     if (1 == size) {
@@ -154,7 +154,7 @@ int ompi_coll_base_alltoall_intra_pairwise(const void *sbuf, int scount,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "coll:base:alltoall_intra_pairwise rank %d", rank));
 
-    SPC_RECORD(OMPI_SPC_BASE_ALLTOALL_PAIRWISE, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLTOALL_PAIRWISE, rcount * rdtype->super.size, size);
 
     err = ompi_datatype_get_extent (sdtype, &lb, &sext);
     if (err != MPI_SUCCESS) { line = __LINE__; goto err_hndl; }
@@ -217,7 +217,7 @@ int ompi_coll_base_alltoall_intra_bruck(const void *sbuf, int scount,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "coll:base:alltoall_intra_bruck rank %d", rank));
 
-    SPC_RECORD(OMPI_SPC_BASE_ALLTOALL_BRUCK, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLTOALL_BRUCK, rcount * rdtype->super.size, size);
 
     err = ompi_datatype_type_extent (sdtype, &sext);
     if (err != MPI_SUCCESS) { line = __LINE__; goto err_hndl; }
@@ -365,7 +365,7 @@ int ompi_coll_base_alltoall_intra_linear_sync(const void *sbuf, int scount,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "ompi_coll_base_alltoall_intra_linear_sync rank %d", rank));
 
-    SPC_RECORD(OMPI_SPC_BASE_ALLTOALL_LINEAR_SYNC, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLTOALL_LINEAR_SYNC, rcount * rdtype->super.size, size);
 
     error = ompi_datatype_get_extent(sdtype, &slb, &sext);
     if (OMPI_SUCCESS != error) {
@@ -517,11 +517,11 @@ int ompi_coll_base_alltoall_intra_two_procs(const void *sbuf, int scount,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "ompi_coll_base_alltoall_intra_two_procs rank %d", rank));
 
-    SPC_RECORD(OMPI_SPC_BASE_ALLTOALL_TWO_PROCS, 1);
-
     if (2 != ompi_comm_size(comm)) {
         return MPI_ERR_UNSUPPORTED_OPERATION;
     }
+
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLTOALL_TWO_PROCS, rcount * rdtype->super.size, 2);
 
     err = ompi_datatype_get_extent (sdtype, &lb, &sext);
     if (err != MPI_SUCCESS) { line = __LINE__; goto err_hndl; }
@@ -605,7 +605,7 @@ int ompi_coll_base_alltoall_intra_basic_linear(const void *sbuf, int scount,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "ompi_coll_base_alltoall_intra_basic_linear rank %d", rank));
 
-    SPC_RECORD(OMPI_SPC_BASE_ALLTOALL_LINEAR, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_ALLTOALL_LINEAR, rcount * rdtype->super.size, size);
 
     err = ompi_datatype_get_extent(sdtype, &lb, &sndinc);
     if (OMPI_SUCCESS != err) {

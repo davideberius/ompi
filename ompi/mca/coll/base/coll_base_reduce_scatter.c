@@ -59,11 +59,11 @@ int ompi_coll_base_reduce_scatter_intra_nonoverlapping(const void *sbuf, void *r
     rank = ompi_comm_rank(comm);
     size = ompi_comm_size(comm);
 
-    SPC_RECORD(OMPI_SPC_BASE_REDUCE_SCATTER_NONOVERLAPPING, 1);
-
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,"coll:base:reduce_scatter_intra_nonoverlapping, rank %d", rank));
 
     for (i = 0, total_count = 0; i < size; i++) { total_count += rcounts[i]; }
+
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_REDUCE_SCATTER_NONOVERLAPPING, total_count * dtype->super.size, size);
 
     /* Reduce to rank 0 (root) and scatterv */
     tmprbuf = (char*) rbuf;
@@ -150,8 +150,6 @@ ompi_coll_base_reduce_scatter_intra_basic_recursivehalving( const void *sbuf,
     rank = ompi_comm_rank(comm);
     size = ompi_comm_size(comm);
 
-    SPC_RECORD(OMPI_SPC_BASE_REDUCE_SCATTER_RECURSIVE_HALVING, 1);
-
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,"coll:base:reduce_scatter_intra_basic_recursivehalving, rank %d", rank));
 
     /* Find displacements and the like */
@@ -163,6 +161,8 @@ ompi_coll_base_reduce_scatter_intra_basic_recursivehalving( const void *sbuf,
         disps[i + 1] = disps[i] + rcounts[i];
     }
     count = disps[size - 1] + rcounts[size - 1];
+
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_REDUCE_SCATTER_RECURSIVE_HALVING, count * dtype->super.size, size);
 
     /* short cut the trivial case */
     if (0 == count) {
@@ -474,8 +474,6 @@ ompi_coll_base_reduce_scatter_intra_ring( const void *sbuf, void *rbuf, const in
     size = ompi_comm_size(comm);
     rank = ompi_comm_rank(comm);
 
-    SPC_RECORD(OMPI_SPC_BASE_REDUCE_SCATTER_RING, 1);
-
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "coll:base:reduce_scatter_intra_ring rank %d, size %d",
                  rank, size));
@@ -493,6 +491,8 @@ ompi_coll_base_reduce_scatter_intra_ring( const void *sbuf, void *rbuf, const in
         total_count += rcounts[i];
         if (max_block_count < rcounts[i]) max_block_count = rcounts[i];
     }
+
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_REDUCE_SCATTER_RING, total_count * dtype->super.size, size);
 
     /* Special case for size == 1 */
     if (1 == size) {

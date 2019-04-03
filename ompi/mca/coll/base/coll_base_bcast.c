@@ -266,7 +266,8 @@ ompi_coll_base_bcast_intra_bintree ( void* buffer,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,"coll:base:bcast_intra_binary rank %d ss %5d typelng %lu segcount %d",
                  ompi_comm_rank(comm), segsize, (unsigned long)typelng, segcount));
 
-    SPC_RECORD(OMPI_SPC_BASE_BCAST_BINTREE, 1);
+    //SPC_RECORD(OMPI_SPC_BASE_BCAST_BINTREE, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_BCAST_BINTREE, count * datatype->super.size, ompi_comm_size(comm));
 
     return ompi_coll_base_bcast_intra_generic( buffer, count, datatype, root, comm, module,
                                                 segcount, data->cached_bintree );

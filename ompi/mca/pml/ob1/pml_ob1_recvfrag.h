@@ -28,6 +28,7 @@
 #define MCA_PML_OB1_RECVFRAG_H
 
 #include "pml_ob1_hdr.h"
+#include "ompi/runtime/ompi_spc.h"
 
 BEGIN_C_DECLS
 
@@ -85,6 +86,7 @@ do {                                                                    \
                                               0);                       \
         _ptr = (unsigned char*)(buffers[0].addr);                       \
         macro_segments[0].seg_addr.pval = buffers[0].addr;              \
+        SPC_RECORD(OMPI_SPC_QUEUE_ALLOCATION, buffers[0].len);          \
     }                                                                   \
     macro_segments[0].seg_len = _size;                                  \
     for( i = 0; i < cnt; i++ ) {                                        \
@@ -98,6 +100,7 @@ do {                                                                    \
 do {                                                                    \
     if( frag->segments[0].seg_len > mca_pml_ob1.unexpected_limit ) {    \
         /* return buffers */                                            \
+        SPC_RECORD(OMPI_SPC_QUEUE_ALLOCATION, -frag->buffers[0].len);   \
         mca_pml_ob1.allocator->alc_free( mca_pml_ob1.allocator,         \
                                          frag->buffers[0].addr );       \
     }                                                                   \

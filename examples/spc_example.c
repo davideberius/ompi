@@ -9,8 +9,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "mpi.h"
+
+#define MMAP 1
 
 /* Sends 'num_messages' messages of 'message_size' bytes from rank 0 to rank 1.
  * All messages are send synchronously and with the same tag in MPI_COMM_WORLD.
@@ -47,15 +50,18 @@ int main(int argc, char **argv)
         message_size = atoi(argv[2]);
     }
 
-    int i, rank, size, provided, num, name_len, desc_len, verbosity, bind, var_class, readonly, continuous, atomic, count, index;
+    int i, rank, size, provided, num, name_len, desc_len, verbosity, bind, var_class, readonly, continuous, atomic, count, index, xml_index;
     MPI_Datatype datatype;
     MPI_T_enum enumtype;
     MPI_Comm comm;
     char name[256], description[256];
 
     /* Counter names to be read by ranks 0 and 1 */
-    char *counter_names[] = {"runtime_spc_OMPI_BYTES_SENT_USER",
-                             "runtime_spc_OMPI_BYTES_RECEIVED_USER" };
+    char *counter_names[] = {"runtime_spc_OMPI_SPC_BYTES_SENT_USER",
+                             "runtime_spc_OMPI_SPC_BYTES_RECEIVED_USER" };
+#if MMAP
+    char *xml_counter = "runtime_spc_OMPI_SPC_XML_FILE";
+#endif
 
     MPI_Init(NULL, NULL);
     MPI_T_init_thread(MPI_THREAD_SINGLE, &provided);
@@ -68,27 +74,36 @@ int main(int argc, char **argv)
     }
 
     /* Determine the MPI_T pvar indices for the OMPI_BYTES_SENT/RECIEVED_USER SPCs */
-    index = -1;
+    index = xml_index = -1;
     MPI_T_pvar_get_num(&num);
     for(i = 0; i < num; i++) {
         name_len = desc_len = 256;
         PMPI_T_pvar_get_info(i, name, &name_len, &verbosity,
                              &var_class, &datatype, &enumtype, description, &desc_len, &bind,
                              &readonly, &continuous, &atomic);
+
         if(strcmp(name, counter_names[rank]) == 0) {
             index = i;
             printf("[%d] %s -> %s\n", rank, name, description);
         }
+#if MMAP
+        if(strcmp(name, xml_counter) == 0) {
+            xml_index = i;
+            printf("[%d] %s -> %s (index -> %d)\n", rank, name, description, xml_index);
+        }
+#endif
     }
 
     /* Make sure we found the counters */
-    if(index == -1) {
+    if(index == -1 || xml_index == -1) {
         fprintf(stderr, "ERROR: Couldn't find the appropriate SPC counter in the MPI_T pvars.\n");
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    int ret;
+    int ret, xml_count;
     long long value;
+    char *xml_filename = (char*)malloc(64 * sizeof(char));
+    sprintf(xml_filename, "this_is_a_test");
 
     MPI_T_pvar_session session;
     MPI_T_pvar_handle handle;
@@ -97,13 +112,29 @@ int main(int argc, char **argv)
     ret = MPI_T_pvar_handle_alloc(session, index, NULL, &handle, &count);
     ret = MPI_T_pvar_start(session, handle);
 
+#if MMAP
+    MPI_T_pvar_session xml_session;
+    MPI_T_pvar_handle xml_handle;
+
+    ret = MPI_T_pvar_session_create(&xml_session);
+    ret = MPI_T_pvar_handle_alloc(xml_session, xml_index, NULL, &xml_handle, &xml_count);
+    printf("xml_count: %d\n", xml_count);
+    ret = MPI_T_pvar_start(xml_session, xml_handle);
+#endif
+
     message_exchange(num_messages, message_size);
 
     ret = MPI_T_pvar_read(session, handle, &value);
+#if MMAP
+    ret = MPI_T_pvar_read(xml_session, xml_handle, &xml_filename);
+#endif
     /* Print the counter values in order by rank */
     for(i = 0; i < 2; i++) {
         if(i == rank) {
             printf("[%d] Value Read: %lld\n", rank, value);
+#if MMAP
+            printf("[%d] Value Read: %s\n", rank, xml_filename);
+#endif
             fflush(stdout);
         }
         MPI_Barrier(MPI_COMM_WORLD);

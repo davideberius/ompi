@@ -90,6 +90,114 @@ static orte_state_cbfunc_t proc_callbacks[] = {
     track_procs
 };
 
+#if SPC_ENABLE == 1
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include "ompi/runtime/ompi_spc.h"
+
+#define SPC_BUFFER_SIZE 1024
+
+OPAL_DECLSPEC opal_event_t spc_event;
+int first_time = 1;
+char buffer[SPC_BUFFER_SIZE];
+int *fd;
+FILE **file_pointers;
+
+void copy_file(int src_fd, char *dest_name)
+{
+    int num_chars, dest_fd;
+
+    //opal_output(0, "\nWriting data to %s\n", dest_name);
+
+    if(-1 == (dest_fd = open(dest_name, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH))) {
+        opal_output(0, "ERROR: Could not open destination file.\n");
+        goto copy_cleanup;
+    }
+
+    while((num_chars = read(src_fd, buffer, SPC_BUFFER_SIZE)) > 0) {
+        if(num_chars != write(dest_fd, buffer, num_chars)) {
+            opal_output(0, "ERROR: Write error.\n");
+            goto copy_cleanup;
+        }
+        if(num_chars == -1) {
+            opal_output(0, "ERROR: Read error.\n");
+            goto copy_cleanup;
+        }
+    }
+
+ copy_cleanup:
+    if(-1 == close(dest_fd)) {
+        opal_output(0, "ERROR: Failed to close output file.\n");
+    }
+    lseek(src_fd, 0, SEEK_SET); /* TODO: Add error handling to this */
+#if 0
+    opal_output(0, "Attempting to reset watermark...\n");
+    SPC_RESET_WATERMARK(OMPI_SPC_MAX_OOS_IN_QUEUE, OMPI_SPC_OOS_IN_QUEUE);
+    SPC_RESET_WATERMARK(OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE, OMPI_SPC_UNEXPECTED_IN_QUEUE);
+    opal_output(0, "Watermark Reset :D\n");
+#endif
+}
+
+int spc_event_cb()
+{
+    int rc, i, j;
+    char sm_file[128], filename[128];
+    char *shm_dir = "/dev/shm";
+    orte_proc_t *pptr;
+
+    orte_node_t *node;
+    node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, ORTE_PROC_MY_NAME->vpid);
+
+    if(first_time) {
+        first_time = 0;
+        //file_pointers = (FILE**)malloc(node->num_procs * sizeof(FILE*));
+        fd = (int*)malloc(node->num_procs * sizeof(int));
+
+        for(i = 0; i < node->num_procs; i++) {
+            //file_pointers[i] = NULL;
+            fd[i] = -1;
+        }
+    }
+
+    for(i = 0; i < node->num_procs; i++) {
+        if(NULL != (pptr = (orte_proc_t*)opal_pointer_array_get_item(node->procs, i))) {
+            //if(file_pointers[i] == NULL) {
+            if(fd[i] == -1) {
+                rc = sprintf(sm_file, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d", shm_dir,
+                             opal_process_info.nodename, pptr->name.jobid, pptr->name.vpid);
+
+                sprintf(filename, "%s.xml", sm_file);
+
+                //if(NULL == (file_pointers[i] = fopen(filename, "r"))){
+                //if(-1 == (fd[i] = open(filename, O_RDONLY))) {
+                if(-1 == (fd[i] = open(sm_file, O_RDONLY))) {
+                    continue;
+                }
+            } else {
+                rc = sprintf(sm_file, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d", shm_dir,
+                             opal_process_info.nodename, pptr->name.jobid, pptr->name.vpid);
+
+                struct timeval tv;
+                struct timezone tz;
+                gettimeofday(&tv, &tz);
+                long long usecs = (1000000*tv.tv_sec) + tv.tv_usec;
+
+                sprintf(filename, "%s.%lld", sm_file, usecs);
+                //copy_file(file_pointers[i], filename);
+                /*if(-1 == (fd[i] = open(sm_file, O_RDONLY))) {
+                    opal_output(0, "ERROR: Couldn't open file.\n");
+                    }*/
+                copy_file(fd[i], filename);
+            }
+        }
+    }
+
+    return ORTE_SUCCESS;
+}
+#endif
+
 /************************
  * API Definitions
  ************************/
@@ -143,6 +251,8 @@ static int init(void)
 static int finalize(void)
 {
     opal_list_item_t *item;
+
+    opal_event_del(&spc_event);
 
     /* cleanup the state machines */
     while (NULL != (item = opal_list_remove_first(&orte_job_states))) {
@@ -230,7 +340,16 @@ static void track_jobs(int fd, short argc, void *cbdata)
                 }
             }
         }
-
+#if SPC_ENABLE == 1
+        opal_event_set(opal_sync_event_base, &spc_event, -1, OPAL_EV_TIMEOUT | OPAL_EV_PERSIST, spc_event_cb, NULL);
+        struct timeval tv;
+        //tv.tv_sec = 1;
+        tv.tv_sec = 0;
+        //tv.tv_usec = 100000; // 100 ms
+        tv.tv_usec = 500000; // 500 ms
+        //tv.tv_usec = 1000000; // 1 s
+        opal_event_add(&spc_event, &tv);
+#endif
         /* flag that this job is complete so the receiver can know */
         if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, &null, 1, ORTE_VPID))) {
             ORTE_ERROR_LOG(rc);

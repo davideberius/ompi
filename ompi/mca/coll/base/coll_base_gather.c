@@ -62,7 +62,7 @@ ompi_coll_base_gather_intra_binomial(const void *sbuf, int scount,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "ompi_coll_base_gather_intra_binomial rank %d", rank));
 
-    SPC_RECORD(OMPI_SPC_BASE_GATHER_BINOMIAL, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_GATHER_BINOMIAL, scount * sdtype->super.size, size);
 
     /* create the binomial tree */
     COLL_BASE_UPDATE_IN_ORDER_BMTREE( comm, base_module, root );
@@ -228,7 +228,7 @@ ompi_coll_base_gather_intra_linear_sync(const void *sbuf, int scount,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "ompi_coll_base_gather_intra_linear_sync rank %d, segment %d", rank, first_segment_size));
 
-    SPC_RECORD(OMPI_SPC_BASE_GATHER_LINEAR_SYNC, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_GATHER_LINEAR_SYNC, scount * sdtype->super.size, size);
 
     if (rank != root) {
         /* Non-root processes:
@@ -389,7 +389,7 @@ ompi_coll_base_gather_intra_basic_linear(const void *sbuf, int scount,
     OPAL_OUTPUT((ompi_coll_base_framework.framework_output,
                  "ompi_coll_base_gather_intra_basic_linear rank %d", rank));
 
-    SPC_RECORD(OMPI_SPC_BASE_GATHER_LINEAR, 1);
+    SPC_COLL_BIN_RECORD(OMPI_SPC_BASE_GATHER_LINEAR, scount * sdtype->super.size, size);
 
     if (rank != root) {
         return MCA_PML_CALL(send(sbuf, scount, sdtype, root,

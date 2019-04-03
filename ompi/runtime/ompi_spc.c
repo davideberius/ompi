@@ -14,6 +14,7 @@
  */
 
 #include "ompi_spc.h"
+#include "papi_sde_interface.h"
 
 opal_timer_t sys_clock_freq_mhz = 0;
 
@@ -22,6 +23,8 @@ static void ompi_spc_dump(void);
 /* Array for converting from SPC indices to MPI_T indices */
 OMPI_DECLSPEC int mpi_t_offset = -1;
 OMPI_DECLSPEC bool mpi_t_enabled = false;
+OMPI_DECLSPEC bool spc_enabled = true;
+OMPI_DECLSPEC bool need_free = false;
 
 OPAL_DECLSPEC ompi_communicator_t *comm = NULL;
 
@@ -29,6 +32,11 @@ typedef struct ompi_spc_event_t {
     const char* counter_name;
     const char* counter_description;
 } ompi_spc_event_t;
+
+/* PAPI SDE Prototypes and Globals */
+static papi_handle_t handle;
+static papi_handle_t ompi_spc_papi_sde_hook_list_events(papi_sde_fptr_struct_t *fptr_struct); /* For internal use only */
+OMPI_DECLSPEC papi_handle_t papi_sde_hook_list_events( papi_sde_fptr_struct_t *fptr_struct);
 
 #define SET_COUNTER_ARRAY(NAME, DESC)   [NAME] = { .counter_name = #NAME, .counter_description = DESC }
 
@@ -190,7 +198,8 @@ static ompi_spc_event_t ompi_spc_events_names[OMPI_SPC_NUM_COUNTERS] = {
     SET_COUNTER_ARRAY(OMPI_SPC_BASE_BARRIER_TREE, "The number of times the base barrier used the tree algorithm."),
     SET_COUNTER_ARRAY(OMPI_SPC_P2P_MESSAGE_SIZE, "This is a bin counter with two subcounters.  The first is messages that are less than or equal to 12288 bytes and the second is those that are larger than 12288 bytes."),
     SET_COUNTER_ARRAY(OMPI_SPC_EAGER_MESSAGES, "The number of messages that fall within the eager size."),
-    SET_COUNTER_ARRAY(OMPI_SPC_NOT_EAGER_MESSAGES, "The number of messages that do not fall within the eager size.")
+    SET_COUNTER_ARRAY(OMPI_SPC_NOT_EAGER_MESSAGES, "The number of messages that do not fall within the eager size."),
+    SET_COUNTER_ARRAY(OMPI_SPC_QUEUE_ALLOCATION, "The amount of memory allocated after runtime currently in use for temporary message queues like the unexpected message queue and the out of sequence message queue.")
 };
 
 /* A bitmap to denote whether an event is activated (1) or not (0) */
@@ -201,8 +210,11 @@ static uint32_t ompi_spc_timer_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] =
 static uint32_t ompi_spc_bin_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] = { 0 };
 /* A bitmap to denote whether an event is collective bin-based (1) or not (0) */
 static uint32_t ompi_spc_collective_bin_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] = { 0 };
+
 /* An array of event structures to store the event data (name and value) */
-static ompi_spc_t *ompi_spc_events = NULL;
+void *ompi_spc_events = NULL;
+static ompi_spc_offset_t ompi_spc_offsets[OMPI_SPC_NUM_COUNTERS] = {-1};
+static ompi_spc_value_t *ompi_spc_values = NULL;
 
 static inline void SET_SPC_BIT(uint32_t* array, int32_t pos)
 {
@@ -238,24 +250,85 @@ static int ompi_spc_notify(mca_base_pvar_t *pvar, mca_base_pvar_event_t event, v
     }
 
     /* For this event, we need to set count to the number of long long type
-     * values for this counter.  All SPC counters are one long long, so we
-     * always set count to 1.
+     * values for this counter.  Most SPC counters are one long long so the
+     * default is 1, however bin counters and the xml string can be longer.
      */
-    if(MCA_BASE_PVAR_HANDLE_BIND == event) {
-        *count = 1;
+    do {
+        if(MCA_BASE_PVAR_HANDLE_BIND == event) {
+            /* Convert from MPI_T pvar index to SPC index */
+            index = pvar->pvar_index - mpi_t_offset;
+            if(index < 0) {
+                char *shm_dir;
+                if(0 == access("/dev/shm", W_OK)) {
+                    shm_dir = "/dev/shm";
+                } else {
+                    opal_show_help("help-mpi-runtime.txt", "spc: /dev/shm failed", true, opal_process_info.job_session_dir);
+                    shm_dir = opal_process_info.job_session_dir;
+                }
+
+                int rank = ompi_comm_rank(comm), rc;
+                char filename[64];
+
+                rc = sprintf(filename, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d.xml", shm_dir,
+                             opal_process_info.nodename, OPAL_PROC_MY_NAME.jobid, rank);
+                *count = strlen(filename);
+                break;
+            }
+            if( IS_SPC_BIT_SET(ompi_spc_bin_event, index) ) { /* TODO: make sure this works */
+                *count = *(int*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_P2P_MESSAGE_SIZE].rules_offset);
+                printf("Count: %d\n", *count);
+            } else {
+                *count = 1;
+            }
+        }
+        /* For this event, we need to turn on the counter */
+        else if(MCA_BASE_PVAR_HANDLE_START == event) {
+            /* Convert from MPI_T pvar index to SPC index */
+            index = pvar->pvar_index - mpi_t_offset;
+            if(index > 0) {
+                SET_SPC_BIT(ompi_spc_attached_event, index);
+            }
+        }
+        /* For this event, we need to turn off the counter */
+        else if(MCA_BASE_PVAR_HANDLE_STOP == event) {
+            /* Convert from MPI_T pvar index to SPC index */
+            index = pvar->pvar_index - mpi_t_offset;
+            if(index > 0) {
+                CLEAR_SPC_BIT(ompi_spc_attached_event, index);
+            }
+        }
+    } while(0);
+
+    return MPI_SUCCESS;
+}
+
+static int ompi_spc_get_xml_filename(const struct mca_base_pvar_t *pvar, void *value, void *obj_handle)
+    __opal_attribute_unused__;
+
+static int ompi_spc_get_xml_filename(const struct mca_base_pvar_t *pvar, void *value, void *obj_handle)
+{
+    int rc;
+    char **filename, *shm_dir;
+
+    if(OPAL_LIKELY(!mpi_t_enabled)) {
+        filename = (char**)value;
+        rc = sprintf(*filename, "");
+
+        return MPI_SUCCESS;
     }
-    /* For this event, we need to turn on the counter */
-    else if(MCA_BASE_PVAR_HANDLE_START == event) {
-        /* Convert from MPI_T pvar index to SPC index */
-        index = pvar->pvar_index - mpi_t_offset;
-        SET_SPC_BIT(ompi_spc_attached_event, index);
+
+    if(0 == access("/dev/shm", W_OK)) {
+        shm_dir = "/dev/shm";
+    } else {
+        opal_show_help("help-mpi-runtime.txt", "spc: /dev/shm failed", true, opal_process_info.job_session_dir);
+        shm_dir = opal_process_info.job_session_dir;
     }
-    /* For this event, we need to turn off the counter */
-    else if(MCA_BASE_PVAR_HANDLE_STOP == event) {
-        /* Convert from MPI_T pvar index to SPC index */
-        index = pvar->pvar_index - mpi_t_offset;
-        CLEAR_SPC_BIT(ompi_spc_attached_event, index);
-    }
+
+    int rank = ompi_comm_rank(comm);
+
+    filename = (char**)value;
+    rc = sprintf(*filename, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d.xml", shm_dir,
+                 opal_process_info.nodename, OPAL_PROC_MY_NAME.jobid, rank);
 
     return MPI_SUCCESS;
 }
@@ -287,20 +360,24 @@ static int ompi_spc_get_count(const struct mca_base_pvar_t *pvar, void *value, v
     /* If this is a bin-based counter, set 'value' to the array of bin values */
     if( IS_SPC_BIT_SET(ompi_spc_bin_event, index) || IS_SPC_BIT_SET(ompi_spc_collective_bin_event, index) ) {
         long long **bin_value = (long long**)value;
-        *bin_value = (long long*)ompi_spc_events[index].bins;
+        *bin_value = (long long*)(ompi_spc_events+ompi_spc_offsets[index].bins_offset);
         return MPI_SUCCESS;
     }
 
     long long *counter_value = (long long*)value;
     /* Set the counter value to the current SPC value */
-    *counter_value = (long long)ompi_spc_events[index].value;
+    *counter_value = ompi_spc_values[index];
+
     /* If this is a timer-based counter, convert from cycles to microseconds */
     if( IS_SPC_BIT_SET(ompi_spc_timer_event, index) ) {
         *counter_value /= sys_clock_freq_mhz;
     }
     /* If this is a high watermark counter, reset it after it has been read */
-    if(index == OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE || index == OMPI_SPC_MAX_OOS_IN_QUEUE) {
-        ompi_spc_events[index].value = 0;
+    if(index == OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE) {
+        ompi_spc_values[index] = ompi_spc_values[OMPI_SPC_UNEXPECTED_IN_QUEUE];
+    }
+    if(index == OMPI_SPC_MAX_OOS_IN_QUEUE) {
+        ompi_spc_values[index] = ompi_spc_values[OMPI_SPC_OOS_IN_QUEUE];
     }
 
     return MPI_SUCCESS;
@@ -309,28 +386,338 @@ static int ompi_spc_get_count(const struct mca_base_pvar_t *pvar, void *value, v
 /* Initializes the events data structure and allocates memory for it if needed. */
 void ompi_spc_events_init(void)
 {
-    int i;
+    ompi_comm_dup(&ompi_mpi_comm_world.comm, &comm);
 
-    /* If the events data structure hasn't been allocated yet, allocate memory for it */
-    if(NULL == ompi_spc_events) {
-        ompi_spc_events = (ompi_spc_t*)malloc(OMPI_SPC_NUM_COUNTERS * sizeof(ompi_spc_t));
-        if(ompi_spc_events == NULL) {
-            opal_show_help("help-mpi-runtime.txt", "lib-call-fail", true,
-                           "malloc", __FILE__, __LINE__);
-            return;
+    int i, value_offset = 0, bin_offset = OMPI_SPC_NUM_COUNTERS*sizeof(ompi_spc_value_t), rank = ompi_comm_rank(comm), shm_fd, rc, ret;
+    char filename[64], *shm_dir;
+    void *ptr;
+
+    if(0 > rc) {
+        opal_show_help("help-mpi-runtime.txt", "spc: filename creation failure", true);
+    }
+
+    FILE *fptr, *shm_fptr = NULL;
+    char sm_file[64], *my_segment;
+    opal_shmem_ds_t shm_ds;
+
+    if(ompi_mpi_spc_mmap_enabled) {
+        /* Determine the location for saving the shared memory file */
+        if(0 == access("/dev/shm", W_OK)) {
+            shm_dir = "/dev/shm";
+        } else {
+            opal_show_help("help-mpi-runtime.txt", "spc: /dev/shm failed", true, opal_process_info.job_session_dir);
+            shm_dir = opal_process_info.job_session_dir;
+        }
+
+        /* Create a shared memory file */
+
+        rc = sprintf(sm_file, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d", shm_dir,
+                     opal_process_info.nodename, OPAL_PROC_MY_NAME.jobid, rank);
+
+        if (0 > rc) {
+            opal_show_help("help-mpi-runtime.txt", "spc: filename creation failure", true);
+        }
+
+        if (NULL != opal_pmix.register_cleanup) {
+            opal_pmix.register_cleanup(sm_file, false, false, false);
+        }
+
+        rc = sprintf(filename, "%s.xml", sm_file);
+        fptr = fopen(filename, "w+");
+
+        /* Registers the name/path of the XML file as an MPI_T pvar */
+        ret = mca_base_pvar_register("ompi", "runtime", "spc", "OMPI_SPC_XML_FILE", "The filename for the SPC XML file for using the mmap interface.",
+                                     //                                     OPAL_INFO_LVL_4, MPI_T_PVAR_CLASS_SIZE,
+                                     OPAL_INFO_LVL_4, MCA_BASE_PVAR_CLASS_GENERIC,
+                                     MCA_BASE_VAR_TYPE_STRING, NULL, MPI_T_BIND_NO_OBJECT,
+                                     MCA_BASE_PVAR_FLAG_READONLY | MCA_BASE_PVAR_FLAG_CONTINUOUS,
+                                     ompi_spc_get_xml_filename, NULL, ompi_spc_notify, NULL);
+        if(ret < 0) {
+            printf("There was an error -> %s\n", opal_strerror(ret));
+        }
+
+
+        fprintf(fptr, "<?xml version=\"1.0\"?>\n");
+        fprintf(fptr, "<SPC>\n");
+    }
+
+    /* ########################################################################
+     * ################## Add Timer Based Counter Enums Here ##################
+     * ########################################################################
+     */
+
+    SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_MATCH_TIME);
+    SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_MATCH_QUEUE_TIME);
+
+    /* ###############################################################################
+     * ###################### Put Bin Counter Sizes Here #############################
+     * ###############################################################################
+     */
+    int data_size = OMPI_SPC_NUM_COUNTERS * sizeof(ompi_spc_value_t);
+
+    /* NOTE: If there are an odd number of bins, there could potentially be some false
+     *       sharing with other counters, so make sure the data size is incremented by
+     *       a multiple of cache line size (typically 8 bytes).
+     */
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_P2P_MESSAGE_SIZE);
+    ompi_spc_offsets[OMPI_SPC_P2P_MESSAGE_SIZE].num_bins = 2;
+    data_size += 2 * (sizeof(int) + sizeof(ompi_spc_value_t));
+
+    /* ########################################################################
+     * ############## Add Collective Bin-Based Counter Enums Here #############
+     * ########################################################################
+     */
+    /* For each collective bin counter we must set the bitmap bit, allocate memory for the arrays and populate the bin_rules array */
+
+    /* Allgather Algorithms */
+    /* Collective bin counter for the Bruck Allgather algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLGATHER_BRUCK);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLGATHER_BRUCK);
+    /* Collective bin counter for the Recursive Doubling Allgather algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLGATHER_RECURSIVE_DOUBLING);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLGATHER_RECURSIVE_DOUBLING);
+    /* Collective bin counter for the Ring Allgather algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLGATHER_RING);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLGATHER_RING);
+    /* Collective bin counter for the Neighbor Exchange Allgather algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLGATHER_NEIGHBOR_EXCHANGE);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLGATHER_NEIGHBOR_EXCHANGE);
+    /* Collective bin counter for the Two Process Allgather algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLGATHER_TWO_PROCS);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLGATHER_TWO_PROCS);
+    /* Collective bin counter for the Linear Allgather algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLGATHER_LINEAR);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLGATHER_LINEAR);
+
+    /* Allreduce Algorithms */
+    /* Collective bin counter for the Nonoverlapping Allreduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLREDUCE_NONOVERLAPPING);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLREDUCE_NONOVERLAPPING);
+    /* Collective bin counter for the Recursive Doubling Allreduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLREDUCE_RECURSIVE_DOUBLING);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLREDUCE_RECURSIVE_DOUBLING);
+    /* Collective bin counter for the Ring Allreduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLREDUCE_RING);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLREDUCE_RING);
+    /* Collective bin counter for the Segmented Ring Allreduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLREDUCE_RING_SEGMENTED);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLREDUCE_RING_SEGMENTED);
+    /* Collective bin counter for the Linear Allreduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLREDUCE_LINEAR);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLREDUCE_LINEAR);
+
+    /* All-to-All Algorithms */
+    /* Collective bin counter for the Inplace Alltoall algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLTOALL_INPLACE);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLTOALL_INPLACE);
+    /* Collective bin counter for the Pairwise Alltoall algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLTOALL_PAIRWISE);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLTOALL_PAIRWISE);
+    /* Collective bin counter for the Bruck Alltoall algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLTOALL_BRUCK);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLTOALL_BRUCK);
+    /* Collective bin counter for the Linear Sync Alltoall algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLTOALL_LINEAR_SYNC);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLTOALL_LINEAR_SYNC);
+    /* Collective bin counter for the Two Process Alltoall algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLTOALL_TWO_PROCS);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLTOALL_TWO_PROCS);
+    /* Collective bin counter for the Linear Alltoall algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_ALLTOALL_LINEAR);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_ALLTOALL_LINEAR);
+
+    /* Broadcast Algorithms */
+    /* Collective bin counter for the Chain Broadcast algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_BCAST_CHAIN);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_CHAIN);
+    /* Collective bin counter for the Binomial Broadcast algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_BCAST_BINOMIAL);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_BINOMIAL);
+    /* Collective bin counter for the Pipeline Broadcast algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_BCAST_PIPELINE);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_PIPELINE);
+    /* Collective bin counter for the Split Binary Tree Broadcast algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_BCAST_SPLIT_BINTREE);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_SPLIT_BINTREE);
+    /* Collective bin counter for the Binary Tree Broadcast algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_BCAST_BINTREE);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_BINTREE);
+
+    /* Gather Algorithms */
+    /* Collective bin counter for the Binomial Gather algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_GATHER_BINOMIAL);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_GATHER_BINOMIAL);
+    /* Collective bin counter for the Linear Sync Gather algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_GATHER_LINEAR_SYNC);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_GATHER_LINEAR_SYNC);
+    /* Collective bin counter for the Linear Gather algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_GATHER_LINEAR);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_GATHER_LINEAR);
+
+    /* Reduce Algorithms */
+    /* Collective bin counter for the Chain Reduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_REDUCE_CHAIN);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_REDUCE_CHAIN);
+    /* Collective bin counter for the Pipeline Reduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_REDUCE_PIPELINE);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_REDUCE_PIPELINE);
+    /* Collective bin counter for the Binary Reduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_REDUCE_BINARY);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_REDUCE_BINARY);
+    /* Collective bin counter for the Binomial Reduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_REDUCE_BINOMIAL);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_REDUCE_BINOMIAL);
+    /* Collective bin counter for the In Order Binary Tree Reduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_REDUCE_IN_ORDER_BINTREE);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_REDUCE_IN_ORDER_BINTREE);
+    /* Collective bin counter for the Linear Reduce algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_REDUCE_LINEAR);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_REDUCE_LINEAR);
+
+    /* Reduce Scatter Algorithms */
+    /* Collective bin counter for the Nonoverlapping Reduce Scatter algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_REDUCE_SCATTER_NONOVERLAPPING);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_REDUCE_SCATTER_NONOVERLAPPING);
+    /* Collective bin counter for the Recursive Halving Reduce Scatter algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_REDUCE_SCATTER_RECURSIVE_HALVING);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_REDUCE_SCATTER_RECURSIVE_HALVING);
+    /* Collective bin counter for the Ring Reduce Scatter algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_REDUCE_SCATTER_RING);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_REDUCE_SCATTER_RING);
+
+    /* Scatter Algorithms */
+    /* Collective bin counter for the Binomial Scatter algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_SCATTER_BINOMIAL);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_SCATTER_BINOMIAL);
+    /* Collective bin counter for the Linear Scatter algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_SCATTER_LINEAR);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_SCATTER_LINEAR);
+
+#if 0
+    /* X Algorithms */
+    /* Collective bin counter for the X algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_);
+    /* Collective bin counter for the X algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_);
+    /* Collective bin counter for the X algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_);
+    /* Collective bin counter for the X algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_);
+    /* Collective bin counter for the X algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_);
+    /* Collective bin counter for the X algorithm */
+    SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_);
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_);
+#endif
+
+    for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
+        if(IS_SPC_BIT_SET(ompi_spc_collective_bin_event,i)) {
+            data_size += 4 * (sizeof(int) + sizeof(ompi_spc_value_t));
+            ompi_spc_offsets[i].num_bins = 4;
         }
     }
+
+    /* ###############################################################################
+     * ###############################################################################
+     * ###############################################################################
+     */
+
+    int bytes_needed = PAGE_SIZE;
+    while(bytes_needed < data_size) {
+        bytes_needed += PAGE_SIZE;
+    }
+
+    if(ompi_mpi_spc_mmap_enabled) {
+        rc = opal_shmem_segment_create(&shm_ds, sm_file, bytes_needed);
+        if (OPAL_SUCCESS != rc) {
+            opal_show_help("help-mpi-runtime.txt", "spc: shm segment creation failure", true);
+        }
+
+        shm_fd = open(sm_file, O_RDWR);
+        if(0 > shm_fd) {
+            opal_show_help("help-mpi-runtime.txt", "spc: shm file open failure", true, strerror(errno));
+        }
+
+        my_segment = opal_shmem_segment_attach(&shm_ds);
+        if(NULL == my_segment) {
+            opal_show_help("help-mpi-runtime.txt", "spc: shm attach failure", true);
+        }
+    }
+
+    /* If the mmap fails, we can fall back to malloc to allocate the data.  If malloc fails, then we can't
+     * continue and the counters will have to be disabled.
+     */
+    if(!ompi_mpi_spc_mmap_enabled) {
+        goto map_failed;
+    }
+    if(MAP_FAILED == (ompi_spc_events = mmap(0, bytes_needed, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0))) {
+        opal_show_help("help-mpi-runtime.txt", "spc: mmap failure", true, strerror(errno));
+    map_failed:
+        ompi_spc_events = NULL;
+        /* mmap failed, so try malloc */
+        if(NULL == (ompi_spc_events = malloc(data_size))) {
+            opal_show_help("help-mpi-runtime.txt", "lib-call-fail", true,
+                           "malloc", __FILE__, __LINE__);
+            spc_enabled = false;
+            return;
+        } else {
+            need_free = true; /* Since we malloc'd this data we will need to free it */
+        }
+    }
+
+    ompi_spc_values = (ompi_spc_value_t*)ompi_spc_events;
+
+    if(ompi_mpi_spc_mmap_enabled) {
+        fprintf(fptr, "\t<filename>%s</filename>\n", sm_file);
+        fprintf(fptr, "\t<file_size>%d</file_size>\n", OMPI_SPC_NUM_COUNTERS * sizeof(ompi_spc_t));
+        fprintf(fptr, "\t<num_counters>%d</num_counters>\n", OMPI_SPC_NUM_COUNTERS);
+        fprintf(fptr, "\t<freq_mhz>%d</freq_mhz>\n", sys_clock_freq_mhz);
+    }
+
     /* The data structure has been allocated, so we simply initialize all of the counters
      * with their names and an initial count of 0.
      */
     for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
-        ompi_spc_events[i].name = (char*)ompi_spc_events_names[i].counter_name;
-        ompi_spc_events[i].value = 0;
-        ompi_spc_events[i].bin_rules = NULL;
-        ompi_spc_events[i].bins = NULL;
+        ompi_spc_values[i] = 0;
+
+        /* Add this counter to the XML document */
+        if(ompi_mpi_spc_mmap_enabled) {
+            fprintf(fptr, "\t<counter>\n");
+            fprintf(fptr, "\t\t<name>%s</name>\n", ompi_spc_events_names[i].counter_name);
+            fprintf(fptr, "\t\t<value_offset>%d</value_offset>\n", value_offset);
+        }
+        value_offset += sizeof(ompi_spc_value_t);
+
+        if(ompi_spc_offsets[i].num_bins > 0) {
+            ompi_spc_offsets[i].rules_offset = bin_offset;
+            bin_offset += ompi_spc_offsets[i].num_bins*sizeof(int);
+            ompi_spc_offsets[i].bins_offset = bin_offset;
+            bin_offset += ompi_spc_offsets[i].num_bins*sizeof(ompi_spc_value_t);
+
+            int mod = bin_offset % CACHE_LINE;
+            if(mod != 0) {
+                bin_offset += CACHE_LINE - mod;
+            }
+        } else {
+            ompi_spc_offsets[i].rules_offset = -1;
+            ompi_spc_offsets[i].bins_offset = -1;
+        }
+        if(ompi_mpi_spc_mmap_enabled) {
+            fprintf(fptr, "\t\t<rules_offset>%d</rules_offset>\n", ompi_spc_offsets[i].rules_offset);
+            fprintf(fptr, "\t\t<bin_offset>%d</bin_offset>\n", ompi_spc_offsets[i].bins_offset);
+            fprintf(fptr, "\t</counter>\n");
+        }
     }
 
-    ompi_comm_dup(&ompi_mpi_comm_world.comm, &comm);
+    if(ompi_mpi_spc_mmap_enabled) {
+        fprintf(fptr, "</SPC>\n");
+        fclose(fptr);
+    }
 }
 
 /* Initializes the SPC data structures and registers all counters as MPI_T pvars.
@@ -344,6 +731,9 @@ void ompi_spc_init(void)
     sys_clock_freq_mhz = opal_timer_base_get_freq() / 1000000;
 
     ompi_spc_events_init();
+    if(!spc_enabled) {
+        return;
+    }
 
     /* Get the MCA params string of counters to turn on */
     char **arg_strings = opal_argv_split(ompi_mpi_spc_attach_string, ',');
@@ -376,12 +766,9 @@ void ompi_spc_init(void)
             }
         }
 
-        /* Set all timer event bits to 0 by default */
-        CLEAR_SPC_BIT(ompi_spc_timer_event, i);
-
         /* Registers the current counter as an MPI_T pvar regardless of whether it's been turned on or not */
         ret = mca_base_pvar_register("ompi", "runtime", "spc", ompi_spc_events_names[i].counter_name, ompi_spc_events_names[i].counter_description,
-                                     OPAL_INFO_LVL_4, MPI_T_PVAR_CLASS_SIZE,
+                                     OPAL_INFO_LVL_4, MPI_T_PVAR_CLASS_COUNTER,
                                      MCA_BASE_VAR_TYPE_UNSIGNED_LONG_LONG, NULL, MPI_T_BIND_NO_OBJECT,
                                      MCA_BASE_PVAR_FLAG_READONLY | MCA_BASE_PVAR_FLAG_CONTINUOUS,
                                      ompi_spc_get_count, NULL, ompi_spc_notify, NULL);
@@ -401,92 +788,104 @@ void ompi_spc_init(void)
     }
 
     /* ########################################################################
-     * ################## Add Timer-Based Counter Enums Here ##################
+     * ###################### Initialize Bin Counters Here ####################
      * ########################################################################
      */
-    SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_MATCH_TIME);
-    SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_MATCH_QUEUE_TIME);
 
-    /* ########################################################################
-     * ################### Add Bin-Based Counter Enums Here ###################
-     * ########################################################################
-     */
-    /* For each bin counter we must set the bitmap bit, allocate memory for the arrays and populate the bin_rules array */
-    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_P2P_MESSAGE_SIZE);
-    ompi_spc_events[OMPI_SPC_P2P_MESSAGE_SIZE].bin_rules = (int*)calloc(2, sizeof(int));
-    ompi_spc_events[OMPI_SPC_P2P_MESSAGE_SIZE].bins = (ompi_spc_value_t*)calloc(2, sizeof(ompi_spc_value_t));
-    if(ompi_spc_events[OMPI_SPC_P2P_MESSAGE_SIZE].bin_rules == NULL || ompi_spc_events[OMPI_SPC_P2P_MESSAGE_SIZE].bins == NULL) {
-        opal_show_help("help-mpi-runtime.txt", "lib-call-fail", true,
-                       "calloc", __FILE__, __LINE__);
-        return;
+    int *rules = NULL;
+    ompi_spc_value_t *bins = NULL;
+
+    rules = (int*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_P2P_MESSAGE_SIZE].rules_offset);
+    bins = (ompi_spc_value_t*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_P2P_MESSAGE_SIZE].bins_offset);
+
+    bins[0] = bins[1] = 0;
+
+    rules[0] = 2; /* The number of bins */
+    rules[1] = 12288; /* The number after which counters go in the second bin */
+
+    /* Initialize Collective Bin Counters Here */
+    int small_message = 12288, small_comm = 64, num_bins = 4; /* TODO: make these user-defined */
+
+    for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
+        if(IS_SPC_BIT_SET(ompi_spc_collective_bin_event,i)) {
+            rules = (int*)(ompi_spc_events+ompi_spc_offsets[i].rules_offset);
+            bins = (ompi_spc_value_t*)(ompi_spc_events+ompi_spc_offsets[i].bins_offset);
+
+            bins[0] = bins[1] = bins[2] = bins[3] = 0;
+
+            rules[0] = num_bins; /* The number of bins */
+            rules[1] = small_message; /* The 'small message' break point */
+            rules[2] = small_comm; /* The 'small communicator' break point */
+            rules[3] = 0; /* Placeholder for now */
+
+            ompi_spc_offsets[i].num_bins = 4;
+        }
     }
-    ompi_spc_events[OMPI_SPC_P2P_MESSAGE_SIZE].bin_rules[0] = 2; /* The number of bins */
-    ompi_spc_events[OMPI_SPC_P2P_MESSAGE_SIZE].bin_rules[1] = 12288; /* The number after which counters go in the second bin */
 
-    /* ########################################################################
-     * ############## Add Collective Bin-Based Counter Enums Here #############
-     * ########################################################################
-     */
-    /* For each bin counter we must set the bitmap bit, allocate memory for the arrays and populate the bin_rules array */
+#if 0
+    /* Collective bin counter for the Chain Broadcast algorithm */
     SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_BCAST_CHAIN);
-    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_CHAIN); /* TODO: Remove once printing is fully fixed for collective bin counters */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_CHAIN].bin_rules = (int*)calloc(4, sizeof(int)); /* Should actually be 3, but keeping 4 for consistency with normal bin counters */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_CHAIN].bins = (ompi_spc_value_t*)calloc(4, sizeof(ompi_spc_value_t));
-    if(ompi_spc_events[OMPI_SPC_BASE_BCAST_CHAIN].bin_rules == NULL || ompi_spc_events[OMPI_SPC_BASE_BCAST_CHAIN].bins == NULL) {
-        opal_show_help("help-mpi-runtime.txt", "lib-call-fail", true,
-                       "calloc", __FILE__, __LINE__);
-        return;
-    }
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_CHAIN].bin_rules[0] = 4; /* The number of bins */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_CHAIN].bin_rules[1] = 12288; /* The 'small message' break point */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_CHAIN].bin_rules[2] = 64; /* The 'small communicator' break point */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_CHAIN].bin_rules[3] = 0; /* Placeholder for now */
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_CHAIN);
 
-    /* For each bin counter we must set the bitmap bit, allocate memory for the arrays and populate the bin_rules array */
+    rules = (int*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_BASE_BCAST_CHAIN].rules_offset);
+    bins = (ompi_spc_value_t*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_BASE_BCAST_CHAIN].bins_offset);
+
+    bins[0] = bins[1] = bins[2] = bins[3] = 0;
+
+    rules[0] = 4; /* The number of bins */
+    rules[1] = 12288; /* The 'small message' break point */
+    rules[2] = 64; /* The 'small communicator' break point */
+    rules[3] = 0; /* Placeholder for now */
+
+    /* Collective bin counter for the Binomial Broadcast algorithm */
     SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_BCAST_BINOMIAL);
-    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_BINOMIAL); /* TODO: Remove once printing is fully fixed for collective bin counters */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_BINOMIAL].bin_rules = (int*)calloc(4, sizeof(int)); /* Should actually be 3, but keeping 4 for consistency with normal bin counters */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_BINOMIAL].bins = (ompi_spc_value_t*)calloc(4, sizeof(ompi_spc_value_t));
-    if(ompi_spc_events[OMPI_SPC_BASE_BCAST_BINOMIAL].bin_rules == NULL || ompi_spc_events[OMPI_SPC_BASE_BCAST_BINOMIAL].bins == NULL) {
-        opal_show_help("help-mpi-runtime.txt", "lib-call-fail", true,
-                       "calloc", __FILE__, __LINE__);
-        return;
-    }
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_BINOMIAL].bin_rules[0] = 4; /* The number of bins */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_BINOMIAL].bin_rules[1] = 12288; /* The 'small message' break point */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_BINOMIAL].bin_rules[2] = 64; /* The 'small communicator' break point */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_BINOMIAL].bin_rules[3] = 0; /* Placeholder for now */
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_BINOMIAL);
 
-    /* For each bin counter we must set the bitmap bit, allocate memory for the arrays and populate the bin_rules array */
+    rules = (int*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_BASE_BCAST_BINOMIAL].rules_offset);
+    bins = (ompi_spc_value_t*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_BASE_BCAST_BINOMIAL].bins_offset);
+
+    bins[0] = bins[1] = bins[2] = bins[3] = 0;
+
+    rules[0] = 4; /* The number of bins */
+    rules[1] = 12288; /* The 'small message' break point */
+    rules[2] = 64; /* The 'small communicator' break point */
+    rules[3] = 0; /* Placeholder for now */
+
+    /* Collective bin counter for the Pipeline Broadcast algorithm */
     SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_BCAST_PIPELINE);
-    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_PIPELINE); /* TODO: Remove once printing is fully fixed for collective bin counters */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_PIPELINE].bin_rules = (int*)calloc(4, sizeof(int)); /* Should actually be 3, but keeping 4 for consistency with normal bin counters */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_PIPELINE].bins = (ompi_spc_value_t*)calloc(4, sizeof(ompi_spc_value_t));
-    if(ompi_spc_events[OMPI_SPC_BASE_BCAST_PIPELINE].bin_rules == NULL || ompi_spc_events[OMPI_SPC_BASE_BCAST_PIPELINE].bins == NULL) {
-        opal_show_help("help-mpi-runtime.txt", "lib-call-fail", true,
-                       "calloc", __FILE__, __LINE__);
-        return;
-    }
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_PIPELINE].bin_rules[0] = 4; /* The number of bins */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_PIPELINE].bin_rules[1] = 12288; /* The 'small message' break point */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_PIPELINE].bin_rules[2] = 64; /* The 'small communicator' break point */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_PIPELINE].bin_rules[3] = 0; /* Placeholder for now */
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_PIPELINE);
 
-    /* For each bin counter we must set the bitmap bit, allocate memory for the arrays and populate the bin_rules array */
+    rules = (int*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_BASE_BCAST_PIPELINE].rules_offset);
+    bins = (ompi_spc_value_t*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_BASE_BCAST_PIPELINE].bins_offset);
+
+    bins[0] = bins[1] = bins[2] = bins[3] = 0;
+
+    rules[0] = 4; /* The number of bins */
+    rules[1] = 12288; /* The 'small message' break point */
+    rules[2] = 64; /* The 'small communicator' break point */
+    rules[3] = 0; /* Placeholder for now */
+
+    /* Collective bin counter for the Split Binary Tree Broadcast algorithm */
     SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_BCAST_SPLIT_BINTREE);
-    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_SPLIT_BINTREE); /* TODO: Remove once printing is fully fixed for collective bin counters */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_SPLIT_BINTREE].bin_rules = (int*)calloc(4, sizeof(int)); /* Should actually be 3, but keeping 4 for consistency with normal bin counters */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_SPLIT_BINTREE].bins = (ompi_spc_value_t*)calloc(4, sizeof(ompi_spc_value_t));
-    if(ompi_spc_events[OMPI_SPC_BASE_BCAST_SPLIT_BINTREE].bin_rules == NULL || ompi_spc_events[OMPI_SPC_BASE_BCAST_SPLIT_BINTREE].bins == NULL) {
-        opal_show_help("help-mpi-runtime.txt", "lib-call-fail", true,
-                       "calloc", __FILE__, __LINE__);
-        return;
-    }
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_SPLIT_BINTREE].bin_rules[0] = 4; /* The number of bins */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_SPLIT_BINTREE].bin_rules[1] = 12288; /* The 'small message' break point */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_SPLIT_BINTREE].bin_rules[2] = 64; /* The 'small communicator' break point */
-    ompi_spc_events[OMPI_SPC_BASE_BCAST_SPLIT_BINTREE].bin_rules[3] = 0; /* Placeholder for now */
+    SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_BCAST_SPLIT_BINTREE);
 
+    rules = (int*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_BASE_BCAST_SPLIT_BINTREE].rules_offset);
+    bins = (ompi_spc_value_t*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_BASE_BCAST_SPLIT_BINTREE].bins_offset);
+
+    bins[0] = bins[1] = bins[2] = bins[3] = 0;
+
+    rules[0] = 4; /* The number of bins */
+    rules[1] = 12288; /* The 'small message' break point */
+    rules[2] = 64; /* The 'small communicator' break point */
+    rules[3] = 0; /* Placeholder for now */
+#endif
+
+    /* PAPI SDE Initialization */
+    /*
+    papi_sde_fptr_struct_t fptr_struct;
+    POPULATE_SDE_FPTR_STRUCT(fptr_struct);
+    (void)ompi_spc_papi_sde_hook_list_events(&fptr_struct);
+    */
     opal_argv_free(arg_strings);
 }
 
@@ -497,6 +896,8 @@ static void ompi_spc_dump(void)
 {
     int i, j, k, world_size, offset, bin_offset;
     long long *recv_buffer = NULL, *send_buffer;
+    int *rules;
+    ompi_spc_value_t *bins;
 
     int rank = ompi_comm_rank(comm);
     world_size = ompi_comm_size(comm);
@@ -504,7 +905,7 @@ static void ompi_spc_dump(void)
     /* Convert from cycles to usecs before sending */
     for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
         if( IS_SPC_BIT_SET(ompi_spc_timer_event, i) ) {
-            SPC_CYCLES_TO_USECS(&ompi_spc_events[i].value);
+            SPC_CYCLES_TO_USECS(&ompi_spc_values[i]);
         }
     }
 
@@ -513,8 +914,9 @@ static void ompi_spc_dump(void)
     for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++){
         if(IS_SPC_BIT_SET(ompi_spc_bin_event, i)) {
             /* Increment the buffer size enough to store the bin_rules and bins values */
-            buffer_size += ompi_spc_events[i].bin_rules[0] * 2 * sizeof(long long);
-            buffer_len += ompi_spc_events[i].bin_rules[0] * 2;
+            rules = (int*)(ompi_spc_events+ompi_spc_offsets[i].rules_offset);
+            buffer_size += rules[0] * 2 * sizeof(long long);
+            buffer_len += rules[0] * 2;
         }
     }
 
@@ -527,19 +929,22 @@ static void ompi_spc_dump(void)
     }
     bin_offset = OMPI_SPC_NUM_COUNTERS;
     for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
-        send_buffer[i] = (long long)ompi_spc_events[i].value;
+        send_buffer[i] = (long long)ompi_spc_values[i];
         /* If this is a bin counter we need to append its arrays to the end of the send buffer */
         if(IS_SPC_BIT_SET(ompi_spc_bin_event, i)) {
-            for(j = 0; j < ompi_spc_events[i].bin_rules[0]; j++) {
-                send_buffer[bin_offset] = (long long)ompi_spc_events[i].bin_rules[j];
+            rules = (int*)(ompi_spc_events+ompi_spc_offsets[i].rules_offset);
+            for(j = 0; j < rules[0]; j++) {
+                send_buffer[bin_offset] = (long long)rules[j];
                 bin_offset++;
             }
             /* A flag to check if all bins are 0 */
             int is_empty = 1;
-            for(j = 0; j < ompi_spc_events[i].bin_rules[0]; j++) {
-                send_buffer[bin_offset] = (long long)ompi_spc_events[i].bins[j];
+            bins = (ompi_spc_value_t*)(ompi_spc_events+ompi_spc_offsets[i].bins_offset);
+            for(j = 0; j < rules[0]; j++) {
+                send_buffer[bin_offset] = (long long)bins[j];
                 bin_offset++;
-                if(ompi_spc_events[i].bins[j] > 0) {
+
+                if(bins[j] > 0) {
                     is_empty = 0;
                 }
             }
@@ -577,11 +982,11 @@ static void ompi_spc_dump(void)
                     }
                     continue;
                 }
-                /* This is a bin counter with a non-zero value */
+                /* This is a non-zero bin counter */
                 if(IS_SPC_BIT_SET(ompi_spc_bin_event, i)) {
-                    /* TODO: change so collective bins are handled in their own logic */
+                    /* This is a non-zero collective bin counter */
                     if(IS_SPC_BIT_SET(ompi_spc_collective_bin_event, i)) {
-                        opal_output(0, "%s -> %lld\n", ompi_spc_events[i].name, recv_buffer[offset+i]);
+                        opal_output(0, "%s -> %lld\n", ompi_spc_events_names[i].counter_name, recv_buffer[offset+i]);
 
                         int num_bins = recv_buffer[bin_offset];
                         int message_boundary = recv_buffer[bin_offset+1];
@@ -597,8 +1002,7 @@ static void ompi_spc_dump(void)
                         bin_offset += num_bins*2;
                         continue;
                     }
-
-                    opal_output(0, "%s\n", ompi_spc_events[i].name);
+                    opal_output(0, "%s\n", ompi_spc_events_names[i].counter_name);
                     int num_bins = recv_buffer[bin_offset];
                     for(k = 0; k < num_bins; k++){
                         if(k == 0) {
@@ -613,7 +1017,7 @@ static void ompi_spc_dump(void)
                     continue;
                 }
                 /* This is a non-zero normal counter */
-                opal_output(0, "%s -> %lld\n", ompi_spc_events[i].name, recv_buffer[offset+i]);
+                opal_output(0, "%s -> %lld\n", ompi_spc_events_names[i].counter_name, recv_buffer[offset+i]);
             }
             opal_output(0, "\n");
             offset += buffer_len;
@@ -639,19 +1043,16 @@ void ompi_spc_fini(void)
 
     int rank = ompi_comm_rank(comm);
 
-    /* Free any memory alocated for bin counters */
     int i;
     for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
-        if(IS_SPC_BIT_SET(ompi_spc_bin_event, i)) {
-            free(ompi_spc_events[i].bin_rules); ompi_spc_events[i].bin_rules = NULL;
-            free(ompi_spc_events[i].bins); ompi_spc_events[i].bins = NULL;
-        }
         CLEAR_SPC_BIT(ompi_spc_attached_event, i);
         CLEAR_SPC_BIT(ompi_spc_timer_event, i);
         CLEAR_SPC_BIT(ompi_spc_bin_event, i);
         CLEAR_SPC_BIT(ompi_spc_collective_bin_event, i);
     }
-    free(ompi_spc_events); ompi_spc_events = NULL;
+    if(need_free) {
+        free(ompi_spc_events); ompi_spc_events = NULL;
+    }
     ompi_comm_free(&comm); comm = NULL;
 }
 
@@ -660,45 +1061,59 @@ void ompi_spc_record(unsigned int event_id, ompi_spc_value_t value)
 {
     /* Denoted unlikely because counters will often be turned off. */
     if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) {
-        OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_events[event_id].value), value);
+        OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_values[event_id]), value);
     }
 }
 
 /* Records an update to a bin counter using an atomic add operation. */
 void ompi_spc_bin_record(unsigned int event_id, ompi_spc_value_t value)
 {
+    int *rules;
+    ompi_spc_value_t *bins;
+
     /* Denoted unlikely because counters will often be turned off. */
     if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) {
-        int i, num_bins = ompi_spc_events[event_id].bin_rules[0];
+        OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_values[event_id]), 1);
+        rules = (int*)(ompi_spc_events+ompi_spc_offsets[event_id].rules_offset);
+        bins = (ompi_spc_value_t*)(ompi_spc_events+ompi_spc_offsets[event_id].bins_offset);
+
+        int i, num_bins = rules[0];
         for(i = 1; i < num_bins; i++) {
-            if(value <= ompi_spc_events[event_id].bin_rules[i]) {
-                OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_events[event_id].bins[i-1]), 1);
+            if(value <= rules[i]) {
+                OPAL_THREAD_ADD_FETCH_SIZE_T(&(bins[i-1]), 1);
                 return;
             }
         }
         /* This didn't fall within any of the other bins, so it must belong to the last bin */
-        OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_events[event_id].bins[num_bins-1]), 1);
+        OPAL_THREAD_ADD_FETCH_SIZE_T(&(bins[num_bins-1]), 1);
     }
 }
 
 /* Records an update to a counter using an atomic add operation. */
 void ompi_spc_collective_bin_record(unsigned int event_id, ompi_spc_value_t bytes, ompi_spc_value_t procs)
 {
+    int *rules;
+    ompi_spc_value_t *bins;
+
     /* Denoted unlikely because counters will often be turned off. */
     if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) {
-        uint small_message = (bytes <= ompi_spc_events[event_id].bin_rules[1]);
-        uint small_comm    = (procs <= ompi_spc_events[event_id].bin_rules[2]);
+        rules = (int*)(ompi_spc_events+ompi_spc_offsets[event_id].rules_offset);
+        bins = (ompi_spc_value_t*)(ompi_spc_events+ompi_spc_offsets[event_id].bins_offset);
+
+        uint small_message = (bytes <= rules[1]);
+        uint small_comm    = (procs <= rules[2]);
         /* Always update the total number of times this collective algorithm was called */
-        OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_events[event_id].value), 1);
+        OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_values[event_id]), 1);
+
         /* Update the appropriate bin for the message size and number of processes */
         if(small_message && small_comm) {
-            OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_events[event_id].bins[0]), 1);
+            OPAL_THREAD_ADD_FETCH_SIZE_T(&(bins[0]), 1);
         } else if(small_message && !small_comm) {
-            OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_events[event_id].bins[1]), 1);
+            OPAL_THREAD_ADD_FETCH_SIZE_T(&(bins[1]), 1);
         } else if(!small_message && small_comm) {
-            OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_events[event_id].bins[2]), 1);
+            OPAL_THREAD_ADD_FETCH_SIZE_T(&(bins[2]), 1);
         } else {
-            OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_events[event_id].bins[3]), 1);
+            OPAL_THREAD_ADD_FETCH_SIZE_T(&(bins[3]), 1);
         }
     }
 }
@@ -726,7 +1141,7 @@ void ompi_spc_timer_stop(unsigned int event_id, opal_timer_t *cycles)
     /* This is denoted unlikely because the counters will often be turned off. */
     if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) {
         *cycles = opal_timer_base_get_cycles() - *cycles;
-        OPAL_THREAD_ADD_FETCH_SIZE_T(&ompi_spc_events[event_id].value, (size_t) *cycles);
+        OPAL_THREAD_ADD_FETCH_SIZE_T(&ompi_spc_values[event_id], (ompi_spc_value_t) *cycles);
     }
 }
 
@@ -741,19 +1156,27 @@ void ompi_spc_user_or_mpi(int tag, ompi_spc_value_t value, unsigned int user_enu
 /* Checks whether the counter denoted by value_enum exceeds the current value of the
  * counter denoted by watermark_enum, and if so sets the watermark_enum counter to the
  * value of the value_enum counter.
+ *
+ * WARNING: This assumes that this function was called while a lock has already been taken.
+ *          This function is NOT thread safe otherwise!
  */
 void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_enum)
 {
     /* Denoted unlikely because counters will often be turned off. */
     if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, watermark_enum) &&
                       IS_SPC_BIT_SET(ompi_spc_attached_event, value_enum)) ) {
-        /* WARNING: This assumes that this function was called while a lock has already been taken.
-         *          This function is NOT thread safe otherwise!
-         */
-        if(ompi_spc_events[value_enum].value > ompi_spc_events[watermark_enum].value) {
-            ompi_spc_events[watermark_enum].value = ompi_spc_events[value_enum].value;
+        if(ompi_spc_values[value_enum] > ompi_spc_values[watermark_enum]) {
+            ompi_spc_values[watermark_enum] = ompi_spc_values[value_enum];
         }
     }
+}
+
+ompi_spc_value_t ompi_spc_get_value(unsigned int event_id)
+{
+    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) {
+        return ompi_spc_values[event_id]; /* Note: this is not thread-safe */
+    }
+    return 0;
 }
 
 /* Converts a counter value that is in cycles to microseconds.
@@ -761,4 +1184,65 @@ void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_e
 void ompi_spc_cycles_to_usecs(ompi_spc_value_t *cycles)
 {
     *cycles = *cycles / sys_clock_freq_mhz;
+}
+
+/* ###############################################################################
+ * #######################   PAPI SDE Functions   ################################
+ * ###############################################################################
+ */
+
+OMPI_DECLSPEC papi_handle_t papi_sde_hook_list_events( papi_sde_fptr_struct_t *fptr_struct)
+{
+    printf("Calling my hook list events...\n");
+    return ompi_spc_papi_sde_hook_list_events(fptr_struct);
+}
+
+papi_handle_t ompi_spc_papi_sde_hook_list_events(papi_sde_fptr_struct_t *fptr_struct)
+{
+    int i, need_fini = 0;
+    printf("MY HOOK LIST EVENTS INTERNAL\n");
+
+    /* This has been called from PAPI and the events structure isn't populated yet */
+    if(ompi_spc_events == NULL) {
+        /* We will need to free this memory */
+        need_fini = 1;
+        /* Initialize the events */
+        ompi_spc_events_init();
+    }
+
+    handle = fptr_struct->init("OMPI");
+
+    /*ompi_spc_events[i].name = (char*)ompi_spc_events_names[i].counter_name;
+    ompi_spc_events[i].value = 0;
+    ompi_spc_events[i].bin_rules = NULL;
+    ompi_spc_events[i].bins = NULL;*/
+#if 0
+    for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
+        /* Timer Events */
+        if(IS_SPC_BIT_SET(ompi_spc_timer_event, i)) {
+            /* TODO: Figure out how to return using a function */
+            fptr_struct->register_counter(handle, ompi_spc_events[i].name, PAPI_SDE_RO|PAPI_SDE_INSTANT, PAPI_SDE_long_long, &ompi_spc_events[i].value);
+        }
+        /* Bin Events */
+        else if(IS_SPC_BIT_SET(ompi_spc_bin_event, i)) {
+            /* TODO: Figure out a proper way to return the bin values */
+            fptr_struct->register_counter(handle, ompi_spc_events[i].name, PAPI_SDE_RO|PAPI_SDE_INSTANT, PAPI_SDE_long_long, &ompi_spc_events[i].value);
+        }
+        /* Collective Bin Events */
+        else if(IS_SPC_BIT_SET(ompi_spc_collective_bin_event, i)) {
+            /* TODO: Figure out a proper way to return the bin values */
+            fptr_struct->register_counter(handle, ompi_spc_events[i].name, PAPI_SDE_RO|PAPI_SDE_INSTANT, PAPI_SDE_long_long, &ompi_spc_events[i].value);
+        }
+        /* Normal Counter Events */
+        else {
+            fptr_struct->register_counter(handle, ompi_spc_events[i].name, PAPI_SDE_RO|PAPI_SDE_INSTANT, PAPI_SDE_long_long, &ompi_spc_events[i].value);
+        }
+    }
+#endif
+    if(need_fini) {
+        /* There may be an issue with the values being dumped here as well when this is called from papi_avail */
+        ompi_spc_fini();
+    }
+
+    return handle;
 }

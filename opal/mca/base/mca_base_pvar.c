@@ -204,6 +204,7 @@ int mca_base_pvar_register (const char *project, const char *framework, const ch
     case MCA_BASE_PVAR_CLASS_STATE:
         /* states MUST be integers */
         if (MCA_BASE_VAR_TYPE_INT != type) {
+            printf("It's not an integer!\n");
             return OPAL_ERR_BAD_PARAM;
         }
         break;
@@ -441,7 +442,6 @@ int mca_base_pvar_handle_alloc (mca_base_pvar_session_t *session, int index, voi
         if (OPAL_SUCCESS != ret) {
             break;
         }
-
         if (0 == pvar->bind) {
             /* ignore binding object */
             obj_handle = NULL;

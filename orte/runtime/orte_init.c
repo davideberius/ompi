@@ -123,7 +123,6 @@ orte_process_name_t orte_name_wildcard = {ORTE_JOBID_WILDCARD, ORTE_VPID_WILDCAR
 
 orte_process_name_t orte_name_invalid = {ORTE_JOBID_INVALID, ORTE_VPID_INVALID};
 
-
 #if OPAL_CC_USE_PRAGMA_IDENT
 #pragma ident ORTE_IDENT_STRING
 #elif OPAL_CC_USE_IDENT
