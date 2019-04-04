@@ -252,7 +252,9 @@ static int finalize(void)
 {
     opal_list_item_t *item;
 
+#if SPC_ENABLE == 1
     opal_event_del(&spc_event);
+#endif
 
     /* cleanup the state machines */
     while (NULL != (item = opal_list_remove_first(&orte_job_states))) {
