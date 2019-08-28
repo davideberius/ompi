@@ -883,10 +883,10 @@ match_one(mca_btl_base_module_t *btl,
                             num_segments, frag);
 #endif
         SPC_TIMER_STOP(OMPI_SPC_MATCH_QUEUE_TIME, &queue_timer);
-
         SPC_RECORD(OMPI_SPC_UNEXPECTED, 1);
         SPC_RECORD(OMPI_SPC_UNEXPECTED_IN_QUEUE, 1);
         SPC_UPDATE_WATERMARK(OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE, OMPI_SPC_UNEXPECTED_IN_QUEUE);
+
         PERUSE_TRACE_MSG_EVENT(PERUSE_COMM_MSG_INSERT_IN_UNEX_Q, comm_ptr,
                                hdr->hdr_src, hdr->hdr_tag, PERUSE_RECV);
         return NULL;

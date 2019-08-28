@@ -130,10 +130,12 @@ static inline int mca_pml_ob1_send_inline (const void *buf, size_t count,
 #if SPC_ENABLE == 1
     if(OPAL_LIKELY(rc == OPAL_SUCCESS)) {
         SPC_USER_OR_MPI(tag, (ompi_spc_value_t)size, OMPI_SPC_BYTES_SENT_USER, OMPI_SPC_BYTES_SENT_MPI);
+        /*
         if(tag >= 0) {
             SPC_RECORD(OMPI_SPC_EAGER_MESSAGES, 1);
             SPC_BIN_RECORD(OMPI_SPC_P2P_MESSAGE_SIZE, (ompi_spc_value_t)size);
         }
+        */
     }
 #endif
 

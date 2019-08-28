@@ -202,6 +202,9 @@ static ompi_spc_event_t ompi_spc_events_names[OMPI_SPC_NUM_COUNTERS] = {
     SET_COUNTER_ARRAY(OMPI_SPC_QUEUE_ALLOCATION, "The amount of memory allocated after runtime currently in use for temporary message queues like the unexpected message queue and the out of sequence message queue.")
 };
 
+//#define SPC_USE_BITMAP
+
+#ifdef SPC_USE_BITMAP
 /* A bitmap to denote whether an event is activated (1) or not (0) */
 static uint32_t ompi_spc_attached_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] = { 0 };
 /* A bitmap to denote whether an event is timer-based (1) or not (0) */
@@ -210,6 +213,17 @@ static uint32_t ompi_spc_timer_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] =
 static uint32_t ompi_spc_bin_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] = { 0 };
 /* A bitmap to denote whether an event is collective bin-based (1) or not (0) */
 static uint32_t ompi_spc_collective_bin_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] = { 0 };
+#else
+/* A bitmap to denote whether an event is activated (1) or not (0) */
+static uint32_t ompi_spc_attached_event[OMPI_SPC_NUM_COUNTERS] = { 0 };
+/* A bitmap to denote whether an event is timer-based (1) or not (0) */
+static uint32_t ompi_spc_timer_event[OMPI_SPC_NUM_COUNTERS] = { 0 };
+/* A bitmap to denote whether an event is bin-based (1) or not (0) */
+static uint32_t ompi_spc_bin_event[OMPI_SPC_NUM_COUNTERS] = { 0 };
+/* A bitmap to denote whether an event is collective bin-based (1) or not (0) */
+static uint32_t ompi_spc_collective_bin_event[OMPI_SPC_NUM_COUNTERS] = { 0 };
+#endif
+
 
 /* An array of event structures to store the event data (name and value) */
 void *ompi_spc_events = NULL;
@@ -218,20 +232,35 @@ static ompi_spc_value_t *ompi_spc_values = NULL;
 
 static inline void SET_SPC_BIT(uint32_t* array, int32_t pos)
 {
+#ifdef SPC_USE_BITMAP
     assert(pos < OMPI_SPC_NUM_COUNTERS);
     array[pos / (8 * sizeof(uint32_t))] |= (1U << (pos % (8 * sizeof(uint32_t))));
+#else
+    assert(pos < OMPI_SPC_NUM_COUNTERS);
+    array[pos] = 1;
+#endif
 }
 
 static inline bool IS_SPC_BIT_SET(uint32_t* array, int32_t pos)
 {
+#ifdef SPC_USE_BITMAP
     assert(pos < OMPI_SPC_NUM_COUNTERS);
     return !!(array[pos / (8 * sizeof(uint32_t))] & (1U << (pos % (8 * sizeof(uint32_t)))));
+#else
+    //assert(pos < OMPI_SPC_NUM_COUNTERS);
+    return (bool)array[pos];
+#endif
 }
 
 static inline void CLEAR_SPC_BIT(uint32_t* array, int32_t pos)
 {
+#ifdef SPC_USE_BITMAP
     assert(pos < OMPI_SPC_NUM_COUNTERS);
     array[pos / (8 * sizeof(uint32_t))] &= ~(1U << (pos % (8 * sizeof(uint32_t))));
+#else
+    assert(pos < OMPI_SPC_NUM_COUNTERS);
+    array[pos] = 0;
+#endif
 }
 
 /* ##############################################################
@@ -1060,7 +1089,11 @@ void ompi_spc_fini(void)
 void ompi_spc_record(unsigned int event_id, ompi_spc_value_t value)
 {
     /* Denoted unlikely because counters will often be turned off. */
+#ifdef SPC_USE_BITMAP
     if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) {
+#else
+    if( ompi_spc_attached_event[event_id] ) {
+#endif
         OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_values[event_id]), value);
     }
 }

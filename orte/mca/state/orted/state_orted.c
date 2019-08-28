@@ -90,7 +90,8 @@ static orte_state_cbfunc_t proc_callbacks[] = {
     track_procs
 };
 
-#if SPC_ENABLE == 1
+//#if SPC_ENABLE == 1
+#if 0
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -252,7 +253,8 @@ static int finalize(void)
 {
     opal_list_item_t *item;
 
-#if SPC_ENABLE == 1
+//#if SPC_ENABLE == 1
+#if 0
     opal_event_del(&spc_event);
 #endif
 
@@ -342,7 +344,8 @@ static void track_jobs(int fd, short argc, void *cbdata)
                 }
             }
         }
-#if SPC_ENABLE == 1
+        //#if SPC_ENABLE == 1
+#if 0
         opal_event_set(opal_sync_event_base, &spc_event, -1, OPAL_EV_TIMEOUT | OPAL_EV_PERSIST, spc_event_cb, NULL);
         struct timeval tv;
         //tv.tv_sec = 1;

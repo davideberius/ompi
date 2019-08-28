@@ -389,9 +389,9 @@ mca_pml_ob1_send_request_start_btl( mca_pml_ob1_send_request_t* sendreq,
     }
 #endif /* OPAL_CUDA_GDR_SUPPORT */
 
-    SPC_BIN_RECORD(OMPI_SPC_P2P_MESSAGE_SIZE, size);
+    //SPC_BIN_RECORD(OMPI_SPC_P2P_MESSAGE_SIZE, size);
     if( OPAL_LIKELY(size <= eager_limit) ) {
-        SPC_RECORD(OMPI_SPC_EAGER_MESSAGES, 1);
+        //SPC_RECORD(OMPI_SPC_EAGER_MESSAGES, 1);
         switch(sendreq->req_send.req_send_mode) {
         case MCA_PML_BASE_SEND_SYNCHRONOUS:
             rc = mca_pml_ob1_send_request_start_rndv(sendreq, bml_btl, size, 0);
@@ -411,7 +411,7 @@ mca_pml_ob1_send_request_start_btl( mca_pml_ob1_send_request_t* sendreq,
             break;
         }
     } else {
-        SPC_RECORD(OMPI_SPC_NOT_EAGER_MESSAGES, 1);
+        //SPC_RECORD(OMPI_SPC_NOT_EAGER_MESSAGES, 1);
         size = eager_limit;
         if(OPAL_UNLIKELY(btl->btl_rndv_eager_limit < eager_limit))
             size = btl->btl_rndv_eager_limit;
