@@ -90,27 +90,22 @@ static orte_state_cbfunc_t proc_callbacks[] = {
     track_procs
 };
 
-//#if SPC_ENABLE == 1
-#if 0
+#if SPC_ENABLE == 1
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include "ompi/runtime/ompi_spc.h"
 
 #define SPC_BUFFER_SIZE 1024
 
-OPAL_DECLSPEC opal_event_t spc_event;
-int first_time = 1;
-char buffer[SPC_BUFFER_SIZE];
-int *fd;
-FILE **file_pointers;
+static opal_event_t ompi_spc_event;
 
 void copy_file(int src_fd, char *dest_name)
 {
     int num_chars, dest_fd;
+    char buffer[SPC_BUFFER_SIZE];
 
-    //opal_output(0, "\nWriting data to %s\n", dest_name);
+    opal_output(0, "\nWriting data to %s\n", dest_name);
 
     if(-1 == (dest_fd = open(dest_name, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH))) {
         opal_output(0, "ERROR: Could not open destination file.\n");
@@ -132,7 +127,9 @@ void copy_file(int src_fd, char *dest_name)
     if(-1 == close(dest_fd)) {
         opal_output(0, "ERROR: Failed to close output file.\n");
     }
-    lseek(src_fd, 0, SEEK_SET); /* TODO: Add error handling to this */
+    if(-1 == lseek(src_fd, 0, SEEK_SET)) {
+        opal_output(0, "ERROR: Failed to reset file pointer.  %s\n", strerror(errno));
+    }
 #if 0
     opal_output(0, "Attempting to reset watermark...\n");
     SPC_RESET_WATERMARK(OMPI_SPC_MAX_OOS_IN_QUEUE, OMPI_SPC_OOS_IN_QUEUE);
@@ -148,31 +145,29 @@ int spc_event_cb()
     char *shm_dir = "/dev/shm";
     orte_proc_t *pptr;
 
+    static int first_time = 1;
+    static int *fd;
+
     orte_node_t *node;
     node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, ORTE_PROC_MY_NAME->vpid);
 
     if(first_time) {
         first_time = 0;
-        //file_pointers = (FILE**)malloc(node->num_procs * sizeof(FILE*));
         fd = (int*)malloc(node->num_procs * sizeof(int));
 
         for(i = 0; i < node->num_procs; i++) {
-            //file_pointers[i] = NULL;
             fd[i] = -1;
         }
     }
 
     for(i = 0; i < node->num_procs; i++) {
         if(NULL != (pptr = (orte_proc_t*)opal_pointer_array_get_item(node->procs, i))) {
-            //if(file_pointers[i] == NULL) {
             if(fd[i] == -1) {
                 rc = sprintf(sm_file, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d", shm_dir,
                              opal_process_info.nodename, pptr->name.jobid, pptr->name.vpid);
 
                 sprintf(filename, "%s.xml", sm_file);
 
-                //if(NULL == (file_pointers[i] = fopen(filename, "r"))){
-                //if(-1 == (fd[i] = open(filename, O_RDONLY))) {
                 if(-1 == (fd[i] = open(sm_file, O_RDONLY))) {
                     continue;
                 }
@@ -186,10 +181,6 @@ int spc_event_cb()
                 long long usecs = (1000000*tv.tv_sec) + tv.tv_usec;
 
                 sprintf(filename, "%s.%lld", sm_file, usecs);
-                //copy_file(file_pointers[i], filename);
-                /*if(-1 == (fd[i] = open(sm_file, O_RDONLY))) {
-                    opal_output(0, "ERROR: Couldn't open file.\n");
-                    }*/
                 copy_file(fd[i], filename);
             }
         }
@@ -253,9 +244,8 @@ static int finalize(void)
 {
     opal_list_item_t *item;
 
-//#if SPC_ENABLE == 1
-#if 0
-    opal_event_del(&spc_event);
+#if SPC_ENABLE == 1
+    opal_event_del(&ompi_spc_event);
 #endif
 
     /* cleanup the state machines */
@@ -344,16 +334,12 @@ static void track_jobs(int fd, short argc, void *cbdata)
                 }
             }
         }
-        //#if SPC_ENABLE == 1
-#if 0
-        opal_event_set(opal_sync_event_base, &spc_event, -1, OPAL_EV_TIMEOUT | OPAL_EV_PERSIST, spc_event_cb, NULL);
+#if SPC_ENABLE == 1
+        opal_event_set(opal_sync_event_base, &ompi_spc_event, -1, OPAL_EV_TIMEOUT | OPAL_EV_PERSIST, spc_event_cb, NULL);
         struct timeval tv;
-        //tv.tv_sec = 1;
         tv.tv_sec = 0;
-        //tv.tv_usec = 100000; // 100 ms
-        tv.tv_usec = 500000; // 500 ms
-        //tv.tv_usec = 1000000; // 1 s
-        opal_event_add(&spc_event, &tv);
+        tv.tv_usec = 500000; /* 500 ms */
+        opal_event_add(&ompi_spc_event, &tv);
 #endif
         /* flag that this job is complete so the receiver can know */
         if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, &null, 1, ORTE_VPID))) {

@@ -26,7 +26,7 @@ OMPI_DECLSPEC bool mpi_t_enabled = false;
 OMPI_DECLSPEC bool spc_enabled = true;
 OMPI_DECLSPEC bool need_free = false;
 
-OPAL_DECLSPEC ompi_communicator_t *comm = NULL;
+OPAL_DECLSPEC ompi_communicator_t *ompi_spc_comm = NULL;
 
 typedef struct ompi_spc_event_t {
     const char* counter_name;
@@ -295,11 +295,17 @@ static int ompi_spc_notify(mca_base_pvar_t *pvar, mca_base_pvar_event_t event, v
                     shm_dir = opal_process_info.job_session_dir;
                 }
 
-                int rank = ompi_comm_rank(comm), rc;
+                int rank = ompi_comm_rank(ompi_spc_comm), rc;
                 char filename[64];
 
-                rc = sprintf(filename, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d.xml", shm_dir,
-                             opal_process_info.nodename, OPAL_PROC_MY_NAME.jobid, rank);
+                if(ompi_mpi_spc_xml_string == NULL) {
+                    rc = sprintf(filename, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d.xml", shm_dir,
+                                 opal_process_info.nodename, OPAL_PROC_MY_NAME.jobid, rank);
+                } else {
+                    rc = sprintf(filename, "%s" OPAL_PATH_SEP "spc_data.%s.%s.%d.xml", shm_dir,
+                                 opal_process_info.nodename, ompi_mpi_spc_xml_string, rank);
+                }
+
                 *count = strlen(filename);
                 break;
             }
@@ -353,12 +359,20 @@ static int ompi_spc_get_xml_filename(const struct mca_base_pvar_t *pvar, void *v
         shm_dir = opal_process_info.job_session_dir;
     }
 
-    int rank = ompi_comm_rank(comm);
+    int rank = ompi_comm_rank(ompi_spc_comm);
 
     filename = (char**)value;
+    if(ompi_mpi_spc_xml_string == NULL) {
+        rc = sprintf(filename, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d.xml", shm_dir,
+                     opal_process_info.nodename, OPAL_PROC_MY_NAME.jobid, rank);
+    } else {
+        rc = sprintf(filename, "%s" OPAL_PATH_SEP "spc_data.%s.%s.%d.xml", shm_dir,
+                     opal_process_info.nodename, ompi_mpi_spc_xml_string, rank);
+    }
+/*
     rc = sprintf(*filename, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d.xml", shm_dir,
                  opal_process_info.nodename, OPAL_PROC_MY_NAME.jobid, rank);
-
+*/
     return MPI_SUCCESS;
 }
 
@@ -415,9 +429,9 @@ static int ompi_spc_get_count(const struct mca_base_pvar_t *pvar, void *value, v
 /* Initializes the events data structure and allocates memory for it if needed. */
 void ompi_spc_events_init(void)
 {
-    ompi_comm_dup(&ompi_mpi_comm_world.comm, &comm);
+    ompi_comm_dup(&ompi_mpi_comm_world.comm, &ompi_spc_comm);
 
-    int i, value_offset = 0, bin_offset = OMPI_SPC_NUM_COUNTERS*sizeof(ompi_spc_value_t), rank = ompi_comm_rank(comm), shm_fd, rc, ret;
+    int i, value_offset = 0, bin_offset = OMPI_SPC_NUM_COUNTERS*sizeof(ompi_spc_value_t), rank = ompi_comm_rank(ompi_spc_comm), shm_fd, rc, ret;
     char filename[64], *shm_dir;
     void *ptr;
 
@@ -447,11 +461,20 @@ void ompi_spc_events_init(void)
             opal_show_help("help-mpi-runtime.txt", "spc: filename creation failure", true);
         }
 
-        if (NULL != opal_pmix.register_cleanup) {
+        /*if (NULL != opal_pmix.register_cleanup) {
             opal_pmix.register_cleanup(sm_file, false, false, false);
-        }
+        }*/
 
-        rc = sprintf(filename, "%s.xml", sm_file);
+        //rc = sprintf(filename, "%s.xml", sm_file);
+        if(ompi_mpi_spc_xml_string == NULL) {
+            rc = sprintf(filename, "%s" OPAL_PATH_SEP "spc_data.%s.%d.%d.xml", shm_dir,
+                         opal_process_info.nodename, OPAL_PROC_MY_NAME.jobid, rank);
+        } else {
+            rc = sprintf(filename, "%s" OPAL_PATH_SEP "spc_data.%s.%s.%d.xml", shm_dir,
+                         opal_process_info.nodename, ompi_mpi_spc_xml_string, rank);
+        }
+        //rc = sprintf(filename, "%s" OPAL_PATH_SEP "spc_data.%s.test.%d.xml", shm_dir,
+                     //opal_process_info.nodename, rank);
         fptr = fopen(filename, "w+");
 
         /* Registers the name/path of the XML file as an MPI_T pvar */
@@ -666,8 +689,8 @@ void ompi_spc_events_init(void)
         if (OPAL_SUCCESS != rc) {
             opal_show_help("help-mpi-runtime.txt", "spc: shm segment creation failure", true);
         }
-
-        shm_fd = open(sm_file, O_RDWR);
+        int default_permissions = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+        shm_fd = open(sm_file, O_RDWR | O_CREAT | O_NONBLOCK, default_permissions);
         if(0 > shm_fd) {
             opal_show_help("help-mpi-runtime.txt", "spc: shm file open failure", true, strerror(errno));
         }
@@ -833,7 +856,7 @@ void ompi_spc_init(void)
     rules[1] = 12288; /* The number after which counters go in the second bin */
 
     /* Initialize Collective Bin Counters Here */
-    int small_message = 12288, small_comm = 64, num_bins = 4; /* TODO: make these user-defined */
+    int num_bins = 4; /* TODO: make these user-defined */
 
     for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
         if(IS_SPC_BIT_SET(ompi_spc_collective_bin_event,i)) {
@@ -843,8 +866,8 @@ void ompi_spc_init(void)
             bins[0] = bins[1] = bins[2] = bins[3] = 0;
 
             rules[0] = num_bins; /* The number of bins */
-            rules[1] = small_message; /* The 'small message' break point */
-            rules[2] = small_comm; /* The 'small communicator' break point */
+            rules[1] = ompi_mpi_spc_message_boundary; /* The 'small message' break point */
+            rules[2] = ompi_mpi_spc_comm_boundary; /* The 'small communicator' break point */
             rules[3] = 0; /* Placeholder for now */
 
             ompi_spc_offsets[i].num_bins = 4;
@@ -928,8 +951,8 @@ static void ompi_spc_dump(void)
     int *rules;
     ompi_spc_value_t *bins;
 
-    int rank = ompi_comm_rank(comm);
-    world_size = ompi_comm_size(comm);
+    int rank = ompi_comm_rank(ompi_spc_comm);
+    world_size = ompi_comm_size(ompi_spc_comm);
 
     /* Convert from cycles to usecs before sending */
     for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
@@ -991,10 +1014,10 @@ static void ompi_spc_dump(void)
             return;
         }
     }
-    (void)comm->c_coll->coll_gather(send_buffer, buffer_len, MPI_LONG_LONG,
-                                    recv_buffer, buffer_len, MPI_LONG_LONG,
-                                    0, comm,
-                                    comm->c_coll->coll_gather_module);
+    (void)ompi_spc_comm->c_coll->coll_gather(send_buffer, buffer_len, MPI_LONG_LONG,
+                                             recv_buffer, buffer_len, MPI_LONG_LONG,
+                                             0, ompi_spc_comm,
+                                             ompi_spc_comm->c_coll->coll_gather_module);
 
     /* Once rank 0 has all of the information, print the aggregated counter values for each rank in order */
     if(rank == 0) {
@@ -1060,17 +1083,22 @@ static void ompi_spc_dump(void)
     }
     free(send_buffer); send_buffer = NULL;
 
-    comm->c_coll->coll_barrier(comm, comm->c_coll->coll_barrier_module);
+    ompi_spc_comm->c_coll->coll_barrier(ompi_spc_comm, ompi_spc_comm->c_coll->coll_barrier_module);
 }
 
 /* Frees any dynamically alocated OMPI SPC data structures */
 void ompi_spc_fini(void)
 {
+    int fd, rc;
+    char sm_file[128];
+    char *shm_dir = "/dev/shm";
+    orte_proc_t *pptr;
+
+    int rank = ompi_comm_rank(ompi_spc_comm);
+
     if (SPC_ENABLE == 1 && ompi_mpi_spc_dump_enabled) {
         ompi_spc_dump();
     }
-
-    int rank = ompi_comm_rank(comm);
 
     int i;
     for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
@@ -1082,7 +1110,7 @@ void ompi_spc_fini(void)
     if(need_free) {
         free(ompi_spc_events); ompi_spc_events = NULL;
     }
-    ompi_comm_free(&comm); comm = NULL;
+    ompi_comm_free(&ompi_spc_comm); ompi_spc_comm = NULL;
 }
 
 /* Records an update to a counter using an atomic add operation. */
