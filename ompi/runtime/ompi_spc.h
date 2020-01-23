@@ -35,31 +35,97 @@
 #include "opal/util/output.h"
 #include "opal/mca/shmem/base/base.h"
 #include "opal/mca/pmix/pmix.h"
+#include "opal/util/sys_limits.h"
 
-#define PAGE_SIZE 4096 /* The number of bytes in a page.  TODO: This should be found programatically */
-#define CACHE_LINE 8 /* The number of bytes in a cache line. TODO: This should be found programatically */
+#define SPC_CACHE_LINE opal_cache_line_size /* The number of bytes in a cache line. */
 #define SPC_MAX_FILENAME PATH_MAX /* The maximum length allowed for the spc file strings */
 #define SPC_SHM_DIR "/dev/shm" /* The default directory for shared memory files */
 
 #include MCA_timer_IMPLEMENTATION_HEADER
 
+/* MCA Parameter Variables */
+/**
+ * A comma delimited list of SPC counters to turn on or 'attach'.  To turn
+ * all counters on, the string can be simply "all".  An empty string will
+ * keep all counters turned off.
+ */
+OMPI_DECLSPEC extern char * ompi_mpi_spc_attach_string;
+
+/**
+ * A string to append to the SPC XML files for using the mmap interface.
+ * This is to make the filename easier to identify.
+ */
+OMPI_DECLSPEC extern char * ompi_mpi_spc_xml_string;
+
+/**
+ * A boolean value that determines whether or not to dump the SPC counter
+ * values in MPI_Finalize.  A value of true dumps the counters and false does not.
+ */
+OMPI_DECLSPEC extern bool ompi_mpi_spc_dump_enabled;
+
+/**
+ * A boolean value that determines whether or not to dump the SPC counter
+ * values in an mmap'd file during execution.  A value of true dumps the
+ * counters and false does not.
+ */
+OMPI_DECLSPEC extern bool ompi_mpi_spc_mmap_enabled;
+
+/**
+ * An integer value that denotes the time period between snapshots with the
+ * SPC mmap interface.
+ */
+OMPI_DECLSPEC extern int ompi_mpi_spc_snapshot_period;
+
+/**
+ * An integer value that denotes the boundary at which a message is qualified
+ * as a small/large message for the point to point message counter.
+ */
+OMPI_DECLSPEC extern int ompi_mpi_spc_p2p_message_boundary;
+
+/**
+ * An integer value that denotes the boundary at which a message is qualified
+ * as a small/large message for collective bin counters.
+ */
+OMPI_DECLSPEC extern int ompi_mpi_spc_collective_message_boundary;
+
+/**
+ * An integer value that denotes the boundary at which a communicator is qualified
+ * as a small/large communicator for collective bin counters.
+ */
+OMPI_DECLSPEC extern int ompi_mpi_spc_collective_comm_boundary;
+
 /* INSTRUCTIONS FOR ADDING COUNTERS
  * 1.) Add a new counter name in the ompi_spc_counters_t enum before
  *     OMPI_SPC_NUM_COUNTERS below.
- * 2.) Add corresponding counter name and descriptions to the
- *     counter_names and counter_descriptions arrays in
+ * 2.) Add corresponding counter description(s) to the
+ *     ompi_spc_events_names definition in
  *     ompi_spc.c  NOTE: The names and descriptions
  *     MUST be in the same array location as where you added the
  *     counter name in step 1.
- * 3.) If this counter is based on a timer, add its enum name to
- *     the logic for timer-based counters in the ompi_spc_init
- *     function in ompi_spc.c
- * 4.) Instrument the Open MPI code base where it makes sense for
- *     your counter to be modified using the SPC_RECORD macro.
+ *     Search For: 'STEP 2'
+ * 3.) If this counter is a specialized counter like a timer,
+ *     bin, or collective bin add its enum name to the logic for
+ *     specialized counters in the ompi_spc_init function in ompi_spc.c
+ *     Search For: 'STEP 3'
+ *     NOTE: If this is a bin counter, and not a collective bin counter,
+ *           you will need to initialize it. Search for: 'STEP 3a'
+ * 4.) If this counter is a watermark counter, additional logic is required
+ *     for when this counter is read.  The standard behavior of watermark
+ *     counters is to keep track of updates to another counter and increase
+ *     when that tracked counter exceeds the current value of the high
+ *     watermark.  These counters are reset to the current value of the
+ *     tracked counter whenever they are read through MPI_T in the
+ *     ompi_spc_get_count function in ompi_spc.c
+ *     Search For: 'STEP 4'
+ * 5.) Instrument the Open MPI code where it makes sense for
+ *     your counter to be modified using the appropriate SPC  macro.
+ *     This will typically be SPC_RECORD, but could be SPC_BIN_RECORD,
+ *     SPC_COLL_BIN_RECORD, SPC_UPDATE_WATERMARK, or SPC_TIMER_START/STOP
+ *     depending on the counter.
  *     Note: If your counter is timer-based you should use the
  *     SPC_TIMER_START and SPC_TIMER_STOP macros to record
  *     the time in cycles to then be converted to microseconds later
- *     in the ompi_spc_get_count function when requested by MPI_T
+ *     in the ompi_spc_get_count function when requested by MPI_T.
  */
 
 /* This enumeration serves as event ids for the various events */
@@ -170,6 +236,8 @@ typedef enum ompi_spc_counters {
     OMPI_SPC_OOS_QUEUE_HOPS,
     OMPI_SPC_MATCH_TIME,
     OMPI_SPC_MATCH_QUEUE_TIME,
+    OMPI_SPC_OOS_MATCH_TIME,
+    OMPI_SPC_OOS_MATCH_QUEUE_TIME,
     OMPI_SPC_UNEXPECTED_IN_QUEUE,
     OMPI_SPC_OOS_IN_QUEUE,
     OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE,
@@ -221,6 +289,11 @@ typedef enum ompi_spc_counters {
     OMPI_SPC_EAGER_MESSAGES,
     OMPI_SPC_NOT_EAGER_MESSAGES,
     OMPI_SPC_QUEUE_ALLOCATION,
+    OMPI_SPC_MAX_QUEUE_ALLOCATION,
+    OMPI_SPC_UNEXPECTED_QUEUE_DATA,
+    OMPI_SPC_MAX_UNEXPECTED_QUEUE_DATA,
+    OMPI_SPC_OOS_QUEUE_DATA,
+    OMPI_SPC_MAX_OOS_QUEUE_DATA,
     OMPI_SPC_NUM_COUNTERS /* This serves as the number of counters.  It must be last. */
 } ompi_spc_counters_t;
 
@@ -246,6 +319,9 @@ typedef struct ompi_spc_offset_s {
     int bins_offset;
 } ompi_spc_offset_t;
 
+/* MCA Parameters Initialization Function */
+int ompi_spc_register_params(void);
+
 /* Events data structure initialization function */
 void ompi_spc_events_init(void);
 
@@ -259,7 +335,7 @@ void ompi_spc_timer_start(unsigned int event_id, opal_timer_t *cycles);
 void ompi_spc_timer_stop(unsigned int event_id, opal_timer_t *cycles);
 void ompi_spc_user_or_mpi(int tag, ompi_spc_value_t value, unsigned int user_enum, unsigned int mpi_enum);
 void ompi_spc_cycles_to_usecs(ompi_spc_value_t *cycles);
-void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_enum);
+void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_enum, ompi_spc_value_t value);
 ompi_spc_value_t ompi_spc_get_value(unsigned int event_id);
 bool IS_SPC_BIT_SET(uint32_t* array, int32_t pos);
 
@@ -295,15 +371,18 @@ bool IS_SPC_BIT_SET(uint32_t* array, int32_t pos);
         ompi_spc_timer_stop(event_id, usec)
 
 #define SPC_USER_OR_MPI(tag, value, enum_if_user, enum_if_mpi) \
-    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, enum_if_user) && IS_SPC_BIT_SET(ompi_spc_attached_event, enum_if_mpi)) ) \
+    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, enum_if_user) || IS_SPC_BIT_SET(ompi_spc_attached_event, enum_if_mpi)) ) \
         ompi_spc_user_or_mpi(tag, value, enum_if_user, enum_if_mpi)
 
 #define SPC_CYCLES_TO_USECS(cycles) \
     ompi_spc_cycles_to_usecs(cycles)
 
-#define SPC_UPDATE_WATERMARK(watermark_enum, value_enum) \
-    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, watermark_enum) && IS_SPC_BIT_SET(ompi_spc_attached_event, value_enum)) ) \
-        ompi_spc_update_watermark(watermark_enum, value_enum)
+/* WARNING: This macro assumes that it was called while a lock has already been taken.
+ *          This function is NOT thread safe otherwise!
+ */
+#define SPC_UPDATE_WATERMARK(watermark_enum, value_enum, value) \
+    if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, value_enum)) ) \
+        ompi_spc_update_watermark(watermark_enum, value_enum, value)
 
 #define SPC_GET(event_id)  \
     ompi_spc_get_value(event_id)
@@ -337,7 +416,7 @@ bool IS_SPC_BIT_SET(uint32_t* array, int32_t pos);
 #define SPC_CYCLES_TO_USECS(cycles) \
     ((void)0)
 
-#define SPC_UPDATE_WATERMARK(watermark_enum, value_enum) \
+#define SPC_UPDATE_WATERMARK(watermark_enum, value_enum, value) \
     ((void)0)
 
 #define SPC_GET(event_id)  \

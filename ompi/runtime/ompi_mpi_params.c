@@ -75,15 +75,6 @@ bool ompi_async_mpi_finalize = false;
 uint32_t ompi_add_procs_cutoff = OMPI_ADD_PROCS_CUTOFF_DEFAULT;
 bool ompi_mpi_dynamics_enabled = true;
 
-char *ompi_mpi_spc_attach_string = NULL;
-char *ompi_mpi_spc_xml_string = NULL;
-bool ompi_mpi_spc_dump_enabled = false;
-bool ompi_mpi_spc_mmap_enabled = false;
-int ompi_mpi_spc_snapshot_period = 0;
-int ompi_mpi_spc_p2p_message_boundary = 12288;
-int ompi_mpi_spc_collective_message_boundary = 12288;
-int ompi_mpi_spc_collective_comm_boundary = 64;
-
 static bool show_default_mca_params = false;
 static bool show_file_mca_params = false;
 static bool show_enviro_mca_params = false;
@@ -330,61 +321,9 @@ int ompi_mpi_register_params(void)
                                       MCA_BASE_VAR_SYN_FLAG_DEPRECATED);
     }
 
-    ompi_mpi_spc_attach_string = NULL;
-    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_attach",
-                                 "A comma delimeted string listing the software-based performance counters (SPCs) to enable.",
-                                 MCA_BASE_VAR_TYPE_STRING, NULL, 0, 0,
-                                 OPAL_INFO_LVL_4,
-                                 MCA_BASE_VAR_SCOPE_READONLY,
-                                 &ompi_mpi_spc_attach_string);
-
-    ompi_mpi_spc_xml_string = NULL;
-    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_xml_string",
-                                 "A string to add to SPC XML files for easier identification.  The format will be: spc_data.[nodename].[jobid or spc_xml_string].[world_rank].xml",
-                                 MCA_BASE_VAR_TYPE_STRING, NULL, 0, 0,
-                                 OPAL_INFO_LVL_4,
-                                 MCA_BASE_VAR_SCOPE_READONLY,
-                                 &ompi_mpi_spc_xml_string);
-
-    ompi_mpi_spc_dump_enabled = false;
-    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_dump_enabled",
-                                 "A boolean value for whether (true) or not (false) to enable dumping SPC counters in MPI_Finalize.",
-                                 MCA_BASE_VAR_TYPE_BOOL, NULL, 0, 0,
-                                 OPAL_INFO_LVL_4,
-                                 MCA_BASE_VAR_SCOPE_READONLY,
-                                 &ompi_mpi_spc_dump_enabled);
-
-    ompi_mpi_spc_mmap_enabled = false;
-    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_mmap_enabled",
-                                 "A boolean value for whether (true) or not (false) to enable dumping SPC counters to an mmap'd file.",
-                                 MCA_BASE_VAR_TYPE_BOOL, NULL, 0, 0,
-                                 OPAL_INFO_LVL_4,
-                                 MCA_BASE_VAR_SCOPE_READONLY,
-                                 &ompi_mpi_spc_mmap_enabled);
-
-    ompi_mpi_spc_p2p_message_boundary = 12288;
-    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_p2p_message_boundary",
-                                 "An integer value for determining the boundary for whether a message is small/large for point to point message size bin counter (<= this value is small).",
-                                 MCA_BASE_VAR_TYPE_INT, NULL, 0, 0,
-                                 OPAL_INFO_LVL_4,
-                                 MCA_BASE_VAR_SCOPE_READONLY,
-                                 &ompi_mpi_spc_p2p_message_boundary);
-
-    ompi_mpi_spc_collective_message_boundary = 12288;
-    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_message_boundary",
-                                 "An integer value for determining the boundary for whether a message is small/large for collective bin counters (<= this value is small).",
-                                 MCA_BASE_VAR_TYPE_INT, NULL, 0, 0,
-                                 OPAL_INFO_LVL_4,
-                                 MCA_BASE_VAR_SCOPE_READONLY,
-                                 &ompi_mpi_spc_collective_message_boundary);
-
-    ompi_mpi_spc_collective_comm_boundary = 64;
-    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_comm_boundary",
-                                 "An integer value for determining the boundary for whether a communicator is small/large for collective bin counters (<= this value is small).",
-                                 MCA_BASE_VAR_TYPE_INT, NULL, 0, 0,
-                                 OPAL_INFO_LVL_4,
-                                 MCA_BASE_VAR_SCOPE_READONLY,
-                                 &ompi_mpi_spc_collective_comm_boundary);
+#if SPC_ENABLE == 1
+    (void) ompi_spc_register_params();
+#endif
 
     return OMPI_SUCCESS;
 }

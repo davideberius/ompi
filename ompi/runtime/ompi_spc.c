@@ -17,24 +17,38 @@
 
 #include "ompi_spc.h"
 
-opal_timer_t sys_clock_freq_mhz = 0;
-
-static void ompi_spc_dump(void);
-
+static opal_timer_t sys_clock_freq_mhz = 0;
 static int mpi_t_offset = -1;
 static bool mpi_t_enabled = false;
 static bool spc_enabled = true;
 static bool need_free = false;
-
+static bool mmap_failed = false;
 static ompi_communicator_t *ompi_spc_comm = NULL;
+
+/* MCA Parameter Variables */
+char *ompi_mpi_spc_attach_string = NULL;
+char *ompi_mpi_spc_xml_string = NULL;
+bool ompi_mpi_spc_dump_enabled = false;
+bool ompi_mpi_spc_mmap_enabled = false;
+int ompi_mpi_spc_snapshot_period = 0;
+int ompi_mpi_spc_p2p_message_boundary = 12288;
+int ompi_mpi_spc_collective_message_boundary = 12288;
+int ompi_mpi_spc_collective_comm_boundary = 64;
 
 typedef struct ompi_spc_event_t {
     const char* counter_name;
     const char* counter_description;
 } ompi_spc_event_t;
 
+static void ompi_spc_dump(void);
+
 #define SET_COUNTER_ARRAY(NAME, DESC)   [NAME] = { .counter_name = #NAME, .counter_description = DESC }
 
+/* STEP 2: Add the counter descriptions for new counters here along with their
+ *         enumeration to be converted to a name value.  NOTE: The names and
+ *         descriptions MUST be in the same array location as where you added
+ *         the counter name in the ompi_spc_counters_t enumeration!
+ */
 static ompi_spc_event_t ompi_spc_events_names[OMPI_SPC_NUM_COUNTERS] = {
     SET_COUNTER_ARRAY(OMPI_SPC_SEND, "The number of times MPI_Send was called."),
     SET_COUNTER_ARRAY(OMPI_SPC_BSEND, "The number of times MPI_Bsend was called."),
@@ -140,14 +154,14 @@ static ompi_spc_event_t ompi_spc_events_names[OMPI_SPC_NUM_COUNTERS] = {
     SET_COUNTER_ARRAY(OMPI_SPC_UNEXPECTED, "The number of messages that arrived as unexpected messages."),
     SET_COUNTER_ARRAY(OMPI_SPC_OUT_OF_SEQUENCE, "The number of messages that arrived out of the proper sequence."),
     SET_COUNTER_ARRAY(OMPI_SPC_OOS_QUEUE_HOPS, "The number of times we jumped to the next element in the out of sequence message queue's ordered list."),
-    SET_COUNTER_ARRAY(OMPI_SPC_MATCH_TIME, "The number of microseconds spent matching unexpected messages.  Note: The timer used on the back end is in cycles, which could potentially be problematic on a system where the clock frequency can change.  On such a system, this counter could be inaccurate since we assume a fixed clock rate."),
-    SET_COUNTER_ARRAY(OMPI_SPC_MATCH_QUEUE_TIME, "The number of microseconds spent inserting unexpected messages into the unexpected message queue.  Note: The timer used on the back end is in cycles, which could potentially be problematic on a system where the clock frequency can change.  On such a system, this counter could be inaccurate since we assume a fixed clock rate."),
+    SET_COUNTER_ARRAY(OMPI_SPC_MATCH_TIME, "The amount of time (MPI_T reports microseconds) spent matching unexpected messages.  Note: The timer used on the back end is in cycles, which could potentially be problematic on a system where the clock frequency can change.  On such a system, this counter could be inaccurate since we assume a fixed clock rate."),
+    SET_COUNTER_ARRAY(OMPI_SPC_MATCH_QUEUE_TIME, "The amount of time (MPI_T reports microseconds, stored in cycles) spent inserting unexpected messages into the unexpected message queue.  Note: The timer used on the back end is in cycles, which could potentially be problematic on a system where the clock frequency can change.  On such a system, this counter could be inaccurate since we assume a fixed clock rate."),
+    SET_COUNTER_ARRAY(OMPI_SPC_OOS_MATCH_TIME, "The amount of time (MPI_T reports microseconds, stored in cycles) spent matching out-of-sequence messages.  Note: The timer used on the back end is in cycles, which could potentially be problematic on a system where the clock frequency can change.  On such a system, this counter could be inaccurate since we assume a fixed clock rate."),
+    SET_COUNTER_ARRAY(OMPI_SPC_OOS_MATCH_QUEUE_TIME, "The amount of time (MPI_T reports microseconds, stored in cycles) spent inserting out-of-sequence messages into the unexpected message queue.  Note: The timer used on the back end is in cycles, which could potentially be problematic on a system where the clock frequency can change.  On such a system, this counter could be inaccurate since we assume a fixed clock rate."),
     SET_COUNTER_ARRAY(OMPI_SPC_UNEXPECTED_IN_QUEUE, "The number of messages that are currently in the unexpected message queue(s) of an MPI process."),
     SET_COUNTER_ARRAY(OMPI_SPC_OOS_IN_QUEUE, "The number of messages that are currently in the out of sequence message queue(s) of an MPI process."),
-    SET_COUNTER_ARRAY(OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE, "The maximum number of messages that the unexpected message queue(s) within an MPI process "
-                                                    "contained at once since the last reset of this counter. Note: This counter is reset each time it is read."),
-    SET_COUNTER_ARRAY(OMPI_SPC_MAX_OOS_IN_QUEUE, "The maximum number of messages that the out of sequence message queue(s) within an MPI process "
-                      "contained at once since the last reset of this counter. Note: This counter is reset each time it is read."),
+    SET_COUNTER_ARRAY(OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE, "The maximum number of messages that the unexpected message queue(s) within an MPI process contained at once since the last reset of this counter. Note: This counter is reset each time it is read.  Note: The OMPI_SPC_UNEXPECTED_IN_QUEUE counter must also be activated."),
+    SET_COUNTER_ARRAY(OMPI_SPC_MAX_OOS_IN_QUEUE, "The maximum number of messages that the out of sequence message queue(s) within an MPI process contained at once since the last reset of this counter. Note: This counter is reset each time it is read.  Note: The OMPI_SPC_OOS_IN_QUEUE counter must also be activated."),
     SET_COUNTER_ARRAY(OMPI_SPC_BASE_BCAST_LINEAR, "The number of times the base broadcast used the linear algorithm."),
     SET_COUNTER_ARRAY(OMPI_SPC_BASE_BCAST_CHAIN, "The number of times the base broadcast used the chain algorithm."),
     SET_COUNTER_ARRAY(OMPI_SPC_BASE_BCAST_PIPELINE, "The number of times the base broadcast used the pipeline algorithm."),
@@ -191,13 +205,21 @@ static ompi_spc_event_t ompi_spc_events_names[OMPI_SPC_NUM_COUNTERS] = {
     SET_COUNTER_ARRAY(OMPI_SPC_BASE_BARRIER_TWO_PROCS, "The number of times the base barrier used the two process algorithm."),
     SET_COUNTER_ARRAY(OMPI_SPC_BASE_BARRIER_LINEAR, "The number of times the base barrier used the linear algorithm."),
     SET_COUNTER_ARRAY(OMPI_SPC_BASE_BARRIER_TREE, "The number of times the base barrier used the tree algorithm."),
-    SET_COUNTER_ARRAY(OMPI_SPC_P2P_MESSAGE_SIZE, "This is a bin counter with two subcounters.  The first is messages that are less than or equal to 12288 bytes and the second is those that are larger than 12288 bytes."),
+    SET_COUNTER_ARRAY(OMPI_SPC_P2P_MESSAGE_SIZE, "This is a bin counter with two subcounters.  The first is messages that are less than or equal to mpi_spc_p2p_message_boundary bytes and the second is those that are larger than mpi_spc_p2p_message_boundary bytes."),
     SET_COUNTER_ARRAY(OMPI_SPC_EAGER_MESSAGES, "The number of messages that fall within the eager size."),
     SET_COUNTER_ARRAY(OMPI_SPC_NOT_EAGER_MESSAGES, "The number of messages that do not fall within the eager size."),
-    SET_COUNTER_ARRAY(OMPI_SPC_QUEUE_ALLOCATION, "The amount of memory allocated after runtime currently in use for temporary message queues like the unexpected message queue and the out of sequence message queue.")
+    SET_COUNTER_ARRAY(OMPI_SPC_QUEUE_ALLOCATION, "The amount of memory allocated after runtime currently in use for temporary message queues like the unexpected message queue and the out of sequence message queue."),
+    SET_COUNTER_ARRAY(OMPI_SPC_MAX_QUEUE_ALLOCATION, "The maximum amount of memory allocated after runtime at one point for temporary message queues like the unexpected message queue and the out of sequence message queue.  Note: The OMPI_SPC_QUEUE_ALLOCATION counter must also be activated."),
+    SET_COUNTER_ARRAY(OMPI_SPC_UNEXPECTED_QUEUE_DATA, "The amount of memory currently in use for the unexpected message queue."),
+    SET_COUNTER_ARRAY(OMPI_SPC_MAX_UNEXPECTED_QUEUE_DATA, "The maximum amount of memory in use for the unexpected message queue.  Note: The OMPI_SPC_UNEXPECTED_QUEUE_DATA counter must also be activated."),
+    SET_COUNTER_ARRAY(OMPI_SPC_OOS_QUEUE_DATA, "The amount of memory currently in use for the out-of-sequence message queue."),
+    SET_COUNTER_ARRAY(OMPI_SPC_MAX_OOS_QUEUE_DATA, "The maximum amount of memory in use for the out-of-sequence message queue.  Note: The OMPI_SPC_OOS_QUEUE_DATA counter must also be activated.")
 };
 
-/* A bitmap to denote whether an event is activated (1) or not (0) */
+/* A bitmap to denote whether an event is activated (1) or not (0) 
+ * This is not static beacuse it is needed in the recording macros
+ * for instrumentation.
+ */
 OMPI_DECLSPEC uint32_t ompi_spc_attached_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] = { 0 };
 /* A bitmap to denote whether an event is timer-based (1) or not (0) */
 static uint32_t ompi_spc_timer_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] = { 0 };
@@ -206,11 +228,17 @@ static uint32_t ompi_spc_bin_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] = {
 /* A bitmap to denote whether an event is collective bin-based (1) or not (0) */
 static uint32_t ompi_spc_collective_bin_event[OMPI_SPC_NUM_COUNTERS / sizeof(uint32_t)] = { 0 };
 
-/* An array of event structures to store the event data (name and value) */
+/* A contiguous data structure for storing the counter values, rules, and bins */
 void *ompi_spc_events = NULL;
+/* An array of offset structures for indexing into the ompi_spc_events data */
 static ompi_spc_offset_t ompi_spc_offsets[OMPI_SPC_NUM_COUNTERS] = {-1};
+/* A pointer into the ompi_spc_events data for the SPC values */
 static ompi_spc_value_t *ompi_spc_values = NULL;
 
+/* ##############################################################
+ * ################## SPC Bitmap Functions ######################
+ * ##############################################################
+ */
 static inline void SET_SPC_BIT(uint32_t* array, int32_t pos)
 {
     assert(pos < OMPI_SPC_NUM_COUNTERS);
@@ -227,6 +255,70 @@ static inline void CLEAR_SPC_BIT(uint32_t* array, int32_t pos)
 {
     assert(pos < OMPI_SPC_NUM_COUNTERS);
     array[pos / (8 * sizeof(uint32_t))] &= ~(1U << (pos % (8 * sizeof(uint32_t))));
+}
+
+/* Registers all of the SPC MCA parameter variables.  If SPCs are enabled, this is called from
+ * ompi_mpi_params.c in its registration function.
+ */
+int ompi_spc_register_params()
+{   
+    ompi_mpi_spc_attach_string = NULL;
+    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_attach",
+                                 "A comma delimeted string listing the software-based performance counters (SPCs) to enable.",
+                                 MCA_BASE_VAR_TYPE_STRING, NULL, 0, 0,
+                                 OPAL_INFO_LVL_4,
+                                 MCA_BASE_VAR_SCOPE_READONLY,
+                                 &ompi_mpi_spc_attach_string);
+
+    ompi_mpi_spc_xml_string = NULL;
+    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_xml_string",
+                                 "A string to add to SPC XML files for easier identification.  The format will be: spc_data.[nodename].[jobid or spc_xml_string].[world_rank].xml",
+                                 MCA_BASE_VAR_TYPE_STRING, NULL, 0, 0,
+                                 OPAL_INFO_LVL_4,
+                                 MCA_BASE_VAR_SCOPE_READONLY,
+                                 &ompi_mpi_spc_xml_string);
+
+    ompi_mpi_spc_dump_enabled = false;
+    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_dump_enabled",
+                                 "A boolean value for whether (true) or not (false) to enable dumping SPC counters in MPI_Finalize.",
+                                 MCA_BASE_VAR_TYPE_BOOL, NULL, 0, 0,
+                                 OPAL_INFO_LVL_4,
+                                 MCA_BASE_VAR_SCOPE_READONLY,
+                                 &ompi_mpi_spc_dump_enabled);
+
+    ompi_mpi_spc_mmap_enabled = false;
+    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_mmap_enabled",
+                                 "A boolean value for whether (true) or not (false) to enable dumping SPC counters to an mmap'd file.",
+                                 MCA_BASE_VAR_TYPE_BOOL, NULL, 0, 0,
+                                 OPAL_INFO_LVL_4,
+                                 MCA_BASE_VAR_SCOPE_READONLY,
+                                 &ompi_mpi_spc_mmap_enabled);
+
+    ompi_mpi_spc_p2p_message_boundary = 12288;
+    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_p2p_message_boundary",
+                                 "An integer value for determining the boundary for whether a message is small/large for point to point message size bin counter (<= this value is small).",
+                                 MCA_BASE_VAR_TYPE_INT, NULL, 0, 0,
+                                 OPAL_INFO_LVL_4,
+                                 MCA_BASE_VAR_SCOPE_READONLY,
+                                 &ompi_mpi_spc_p2p_message_boundary);
+
+    ompi_mpi_spc_collective_message_boundary = 12288;
+    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_collective_message_boundary",
+                                 "An integer value for determining the boundary for whether a message is small/large for collective bin counters (<= this value is small).",
+                                 MCA_BASE_VAR_TYPE_INT, NULL, 0, 0,
+                                 OPAL_INFO_LVL_4,
+                                 MCA_BASE_VAR_SCOPE_READONLY,
+                                 &ompi_mpi_spc_collective_message_boundary);
+
+    ompi_mpi_spc_collective_comm_boundary = 64;
+    (void) mca_base_var_register("ompi", "mpi", NULL, "spc_collective_comm_boundary",
+                                 "An integer value for determining the boundary for whether a communicator is small/large for collective bin counters (<= this value is small).",
+                                 MCA_BASE_VAR_TYPE_INT, NULL, 0, 0,
+                                 OPAL_INFO_LVL_4,
+                                 MCA_BASE_VAR_SCOPE_READONLY,
+                                 &ompi_mpi_spc_collective_comm_boundary);
+
+    return OMPI_SUCCESS;
 }
 
 /* ##############################################################
@@ -277,9 +369,8 @@ static int ompi_spc_notify(mca_base_pvar_t *pvar, mca_base_pvar_event_t event, v
                 *count = strlen(filename);
                 break;
             }
-            if( IS_SPC_BIT_SET(ompi_spc_bin_event, index) ) { /* TODO: make sure this works */
-                *count = *(int*)(ompi_spc_events+ompi_spc_offsets[OMPI_SPC_P2P_MESSAGE_SIZE].rules_offset);
-                printf("Count: %d\n", *count);
+            if( IS_SPC_BIT_SET(ompi_spc_bin_event, index) || IS_SPC_BIT_SET(ompi_spc_collective_bin_event, index) ) {
+                *count = *(int*)(ompi_spc_events+ompi_spc_offsets[index].rules_offset);
             } else {
                 *count = 1;
             }
@@ -341,15 +432,10 @@ static int ompi_spc_get_xml_filename(const struct mca_base_pvar_t *pvar, void *v
     return MPI_SUCCESS;
 }
 
-/* ##############################################################
- * ################# Begin SPC Functions ########################
- * ##############################################################
- */
-
 /* This function returns the current count of an SPC counter that has been retistered
  * as an MPI_T pvar.  The MPI_T index is not necessarily the same as the SPC index,
  * so we need to convert from MPI_T index to SPC index and then set the 'value' argument
- * to the correct value for this pvar.
+ * to the correct value for this pvar.  Watermark counters are also reset here.
  */
 static int ompi_spc_get_count(const struct mca_base_pvar_t *pvar, void *value, void *obj_handle)
     __opal_attribute_unused__;
@@ -367,8 +453,11 @@ static int ompi_spc_get_count(const struct mca_base_pvar_t *pvar, void *value, v
 
     /* If this is a bin-based counter, set 'value' to the array of bin values */
     if( IS_SPC_BIT_SET(ompi_spc_bin_event, index) || IS_SPC_BIT_SET(ompi_spc_collective_bin_event, index) ) {
-        long long **bin_value = (long long**)value;
-        *bin_value = (long long*)(ompi_spc_events+ompi_spc_offsets[index].bins_offset);
+        long long *bin_value = (long long*)value;
+        int count = ((int*)(ompi_spc_events+ompi_spc_offsets[index].rules_offset))[0];
+        for(int i = 0; i < count; i++) {
+            bin_value[i] = ((long long*)(ompi_spc_events+ompi_spc_offsets[index].bins_offset))[i];
+        }
         return MPI_SUCCESS;
     }
 
@@ -380,28 +469,47 @@ static int ompi_spc_get_count(const struct mca_base_pvar_t *pvar, void *value, v
     if( IS_SPC_BIT_SET(ompi_spc_timer_event, index) ) {
         *counter_value /= sys_clock_freq_mhz;
     }
-    /* If this is a high watermark counter, reset it after it has been read */
+    /* STEP 4: If this is a high watermark counter, reset it after it has been read.
+     *         Be sure to reset the counter to the current value of the counter it
+     *         is tracking.
+     */
     if(index == OMPI_SPC_MAX_UNEXPECTED_IN_QUEUE) {
         ompi_spc_values[index] = ompi_spc_values[OMPI_SPC_UNEXPECTED_IN_QUEUE];
     }
     if(index == OMPI_SPC_MAX_OOS_IN_QUEUE) {
         ompi_spc_values[index] = ompi_spc_values[OMPI_SPC_OOS_IN_QUEUE];
     }
+    if(index == OMPI_SPC_MAX_QUEUE_ALLOCATION) {
+        ompi_spc_values[index] = ompi_spc_values[OMPI_SPC_QUEUE_ALLOCATION];
+    }
+    if(index == OMPI_SPC_MAX_UNEXPECTED_QUEUE_DATA) {
+        ompi_spc_values[index] = ompi_spc_values[OMPI_SPC_UNEXPECTED_QUEUE_DATA];
+    }
+    if(index == OMPI_SPC_MAX_OOS_QUEUE_DATA) {
+        ompi_spc_values[index] = ompi_spc_values[OMPI_SPC_OOS_QUEUE_DATA];
+    }
 
     return MPI_SUCCESS;
 }
+
+/* ##############################################################
+ * ################# Begin SPC Functions ########################
+ * ##############################################################
+ */
 
 /* Initializes the events data structure and allocates memory for it if needed. */
 void ompi_spc_events_init(void)
 {
     ompi_comm_dup(&ompi_mpi_comm_world.comm, &ompi_spc_comm);
 
-    int i, value_offset = 0, bin_offset = OMPI_SPC_NUM_COUNTERS*sizeof(ompi_spc_value_t), rank = ompi_comm_rank(ompi_spc_comm), shm_fd, rc, ret;
+    int i, value_offset = 0, bin_offset = OMPI_SPC_NUM_COUNTERS*sizeof(ompi_spc_value_t), rank = ompi_comm_rank(ompi_spc_comm), shm_fd, rc, ret, mod;
     char filename[SPC_MAX_FILENAME], *shm_dir;
     void *ptr;
 
-    if(0 > rc) {
-        opal_show_help("help-mpi-runtime.txt", "spc: filename creation failure", true);
+    /* Make sure the bin offset is cache aligned to avoid false sharing */
+    mod = bin_offset % SPC_CACHE_LINE;
+    if(mod != 0) {
+        bin_offset += SPC_CACHE_LINE - mod;
     }
 
     FILE *fptr, *shm_fptr = NULL;
@@ -433,6 +541,9 @@ void ompi_spc_events_init(void)
             rc = snprintf(filename, SPC_MAX_FILENAME, "%s" OPAL_PATH_SEP "spc_data.%s.%s.%d.xml", shm_dir,
                          opal_process_info.nodename, ompi_mpi_spc_xml_string, rank);
         }
+        if (0 > rc) {
+            opal_show_help("help-mpi-runtime.txt", "spc: filename creation failure", true);
+        }
         fptr = fopen(filename, "w+");
 
         /* Registers the name/path of the XML file as an MPI_T pvar */
@@ -442,7 +553,7 @@ void ompi_spc_events_init(void)
                                      MCA_BASE_PVAR_FLAG_READONLY | MCA_BASE_PVAR_FLAG_CONTINUOUS,
                                      ompi_spc_get_xml_filename, NULL, ompi_spc_notify, NULL);
         if(ret < 0) {
-            printf("There was an error -> %s\n", opal_strerror(ret));
+            opal_output(0, "There was an error registering an MPI_T pvar -> %s\n", opal_strerror(ret));
         }
 
 
@@ -450,6 +561,9 @@ void ompi_spc_events_init(void)
         fprintf(fptr, "<SPC>\n");
     }
 
+    /* STEP 3: Add specialized counter enumerations to the appropriate bitmap here.
+     *         
+     */
     /* ########################################################################
      * ################## Add Timer Based Counter Enums Here ##################
      * ########################################################################
@@ -457,6 +571,8 @@ void ompi_spc_events_init(void)
 
     SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_MATCH_TIME);
     SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_MATCH_QUEUE_TIME);
+    SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_OOS_MATCH_TIME);
+    SET_SPC_BIT(ompi_spc_timer_event, OMPI_SPC_OOS_MATCH_QUEUE_TIME);
 
     /* ###############################################################################
      * ###################### Put Bin Counter Sizes Here #############################
@@ -464,10 +580,6 @@ void ompi_spc_events_init(void)
      */
     int data_size = OMPI_SPC_NUM_COUNTERS * sizeof(ompi_spc_value_t);
 
-    /* NOTE: If there are an odd number of bins, there could potentially be some false
-     *       sharing with other counters, so make sure the data size is incremented by
-     *       a multiple of cache line size (typically 8 bytes).
-     */
     SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_P2P_MESSAGE_SIZE);
     ompi_spc_offsets[OMPI_SPC_P2P_MESSAGE_SIZE].num_bins = 2;
     data_size += 2 * (sizeof(int) + sizeof(ompi_spc_value_t));
@@ -602,6 +714,7 @@ void ompi_spc_events_init(void)
     SET_SPC_BIT(ompi_spc_collective_bin_event, OMPI_SPC_BASE_SCATTER_LINEAR);
     SET_SPC_BIT(ompi_spc_bin_event, OMPI_SPC_BASE_SCATTER_LINEAR);
 
+/* Form for adding new collective bin counters */
 #if 0
     /* X Algorithms */
     /* Collective bin counter for the X algorithm */
@@ -632,26 +745,29 @@ void ompi_spc_events_init(void)
     }
 
     /* ###############################################################################
-     * ###############################################################################
+     * ############################# MMAP Initialization #############################
      * ###############################################################################
      */
-
-    int bytes_needed = PAGE_SIZE * ((data_size + PAGE_SIZE - 1) % PAGE_SIZE);
+    uint page_size = opal_getpagesize();
+    int bytes_needed = page_size * ((data_size + page_size - 1) % page_size);
 
     if(ompi_mpi_spc_mmap_enabled) {
         rc = opal_shmem_segment_create(&shm_ds, sm_file, bytes_needed);
         if (OPAL_SUCCESS != rc) {
             opal_show_help("help-mpi-runtime.txt", "spc: shm segment creation failure", true);
+            goto map_failed;
         }
         int default_permissions = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
         shm_fd = open(sm_file, O_RDWR | O_CREAT | O_NONBLOCK, default_permissions);
         if(0 > shm_fd) {
             opal_show_help("help-mpi-runtime.txt", "spc: shm file open failure", true, strerror(errno));
+            goto map_failed;
         }
 
         my_segment = opal_shmem_segment_attach(&shm_ds);
         if(NULL == my_segment) {
             opal_show_help("help-mpi-runtime.txt", "spc: shm attach failure", true);
+            goto map_failed;
         }
     }
 
@@ -664,9 +780,10 @@ void ompi_spc_events_init(void)
     if(MAP_FAILED == (ompi_spc_events = mmap(0, bytes_needed, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0))) {
         opal_show_help("help-mpi-runtime.txt", "spc: mmap failure", true, strerror(errno));
     map_failed:
+        mmap_failed = true;
         ompi_spc_events = NULL;
         /* mmap failed, so try malloc */
-        if(NULL == (ompi_spc_events = malloc(data_size))) {
+        if(NULL == (ompi_spc_events = malloc(bytes_needed))) {
             opal_show_help("help-mpi-runtime.txt", "lib-call-fail", true,
                            "malloc", __FILE__, __LINE__);
             spc_enabled = false;
@@ -678,7 +795,10 @@ void ompi_spc_events_init(void)
 
     ompi_spc_values = (ompi_spc_value_t*)ompi_spc_events;
 
-    if(ompi_mpi_spc_mmap_enabled) {
+    /* Write the XML file header with the basic spc information.
+     * NOTE: If we failed to mmap the data file, there is no need to write the XML file.
+     */
+    if(ompi_mpi_spc_mmap_enabled && !mmap_failed) {
         fprintf(fptr, "\t<filename>%s</filename>\n", sm_file);
         fprintf(fptr, "\t<file_size>%d</file_size>\n", OMPI_SPC_NUM_COUNTERS * sizeof(ompi_spc_t));
         fprintf(fptr, "\t<num_counters>%d</num_counters>\n", OMPI_SPC_NUM_COUNTERS);
@@ -692,7 +812,7 @@ void ompi_spc_events_init(void)
         ompi_spc_values[i] = 0;
 
         /* Add this counter to the XML document */
-        if(ompi_mpi_spc_mmap_enabled) {
+        if(ompi_mpi_spc_mmap_enabled && !mmap_failed) {
             fprintf(fptr, "\t<counter>\n");
             fprintf(fptr, "\t\t<name>%s</name>\n", ompi_spc_events_names[i].counter_name);
             fprintf(fptr, "\t\t<value_offset>%d</value_offset>\n", value_offset);
@@ -705,22 +825,23 @@ void ompi_spc_events_init(void)
             ompi_spc_offsets[i].bins_offset = bin_offset;
             bin_offset += ompi_spc_offsets[i].num_bins*sizeof(ompi_spc_value_t);
 
-            int mod = bin_offset % CACHE_LINE;
+            /* Make sure the bin offset is cache aligned to avoid false sharing */
+            mod = bin_offset % SPC_CACHE_LINE;
             if(mod != 0) {
-                bin_offset += CACHE_LINE - mod;
+                bin_offset += SPC_CACHE_LINE - mod;
             }
         } else {
             ompi_spc_offsets[i].rules_offset = -1;
             ompi_spc_offsets[i].bins_offset = -1;
         }
-        if(ompi_mpi_spc_mmap_enabled) {
+        if(ompi_mpi_spc_mmap_enabled && !mmap_failed) {
             fprintf(fptr, "\t\t<rules_offset>%d</rules_offset>\n", ompi_spc_offsets[i].rules_offset);
             fprintf(fptr, "\t\t<bin_offset>%d</bin_offset>\n", ompi_spc_offsets[i].bins_offset);
             fprintf(fptr, "\t</counter>\n");
         }
     }
 
-    if(ompi_mpi_spc_mmap_enabled) {
+    if(ompi_mpi_spc_mmap_enabled && !mmap_failed) {
         fprintf(fptr, "</SPC>\n");
         fclose(fptr);
     }
@@ -752,11 +873,11 @@ void ompi_spc_init(void)
         if(strcmp(arg_strings[0], "all") == 0) {
             all_on = 1;
         }
+    } else if(0 == num_args) {
+        goto no_counters;
     }
 
     for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
-        /* Reset all timer-based counters */
-        CLEAR_SPC_BIT(ompi_spc_timer_event, i);
         matched = all_on;
 
         if( !matched ) {
@@ -789,7 +910,6 @@ void ompi_spc_init(void)
             }
         }
         if( (ret < 0) || (all_on && (ret != (mpi_t_offset + found - 1))) ) {
-            printf("ret -> %d\n", ret);
             mpi_t_enabled = false;
             opal_show_help("help-mpi-runtime.txt", "spc: MPI_T disabled", true);
             break;
@@ -800,7 +920,10 @@ void ompi_spc_init(void)
      * ###################### Initialize Bin Counters Here ####################
      * ########################################################################
      */
-
+    /* NOTE: These should be initialized even if they aren't currently turned on.
+     *       This is just in case they are turned on mid-run through MPI_T.
+     */
+    /* STEP 3a: Regular bin counters initialized here. */
     int *rules = NULL;
     ompi_spc_value_t *bins = NULL;
 
@@ -813,7 +936,7 @@ void ompi_spc_init(void)
     rules[1] = ompi_mpi_spc_p2p_message_boundary; /* The number after which counters go in the second bin */
 
     /* Initialize Collective Bin Counters Here */
-    int num_bins = 4; /* TODO: make these user-defined */
+    int num_bins = 4; /* This can be expanded to be more flexible */
 
     for(i = 0; i < OMPI_SPC_NUM_COUNTERS; i++) {
         if(IS_SPC_BIT_SET(ompi_spc_collective_bin_event,i)) {
@@ -831,6 +954,7 @@ void ompi_spc_init(void)
         }
     }
 
+no_counters:
     opal_argv_free(arg_strings);
 }
 
@@ -1035,7 +1159,7 @@ void ompi_spc_bin_record(unsigned int event_id, ompi_spc_value_t value)
     OPAL_THREAD_ADD_FETCH_SIZE_T(&(bins[num_bins-1]), 1);
 }
 
-/* Records an update to a counter using an atomic add operation. */
+/* Records an update to a collective bin counter using an atomic add operation. */
 void ompi_spc_collective_bin_record(unsigned int event_id, ompi_spc_value_t bytes, ompi_spc_value_t procs)
 {
     int *rules;
@@ -1098,17 +1222,25 @@ void ompi_spc_user_or_mpi(int tag, ompi_spc_value_t value, unsigned int user_enu
  * WARNING: This assumes that this function was called while a lock has already been taken.
  *          This function is NOT thread safe otherwise!
  */
-void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_enum)
+void ompi_spc_update_watermark(unsigned int watermark_enum, unsigned int value_enum, ompi_spc_value_t value)
 {
-    if(ompi_spc_values[value_enum] > ompi_spc_values[watermark_enum]) {
-        ompi_spc_values[watermark_enum] = ompi_spc_values[value_enum];
+    OPAL_THREAD_ADD_FETCH_SIZE_T(&(ompi_spc_values[value_enum]), value);
+    if(IS_SPC_BIT_SET(ompi_spc_attached_event, watermark_enum)) {
+        if(ompi_spc_values[value_enum] > ompi_spc_values[watermark_enum]) {
+            ompi_spc_values[watermark_enum] = ompi_spc_values[value_enum];
+        }
     }
 }
 
+/* Gets the value of an SPC counter.
+ *
+ * WARNING: This function is not performed atomically and may not return the most up to date
+ *          value in a threaded run.
+ */
 ompi_spc_value_t ompi_spc_get_value(unsigned int event_id)
 {
     if( OPAL_UNLIKELY(IS_SPC_BIT_SET(ompi_spc_attached_event, event_id)) ) {
-        return ompi_spc_values[event_id]; /* Note: this is not thread-safe */
+        return ompi_spc_values[event_id];
     }
     return 0;
 }

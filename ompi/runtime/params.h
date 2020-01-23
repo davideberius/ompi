@@ -26,6 +26,9 @@
 #define OMPI_RUNTIME_PARAMS_H
 
 #include "ompi_config.h"
+#if SPC_ENABLE == 1
+#include "ompi_spc.h"
+#endif
 
 BEGIN_C_DECLS
 
@@ -140,57 +143,6 @@ OMPI_DECLSPEC extern bool ompi_async_mpi_init;
 
 /* EXPERIMENTAL: do not perform an RTE barrier at the beginning of MPI_Finalize */
 OMPI_DECLSPEC extern bool ompi_async_mpi_finalize;
-
-/**
- * A comma delimited list of SPC counters to turn on or 'attach'.  To turn
- * all counters on, the string can be simply "all".  An empty string will
- * keep all counters turned off.
- */
-OMPI_DECLSPEC extern char * ompi_mpi_spc_attach_string;
-
-/**
- * A string to append to the SPC XML files for using the mmap interface.
- * This is to make the filename easier to identify.
- */
-OMPI_DECLSPEC extern char * ompi_mpi_spc_xml_string;
-
-/**
- * A boolean value that determines whether or not to dump the SPC counter
- * values in MPI_Finalize.  A value of true dumps the counters and false does not.
- */
-OMPI_DECLSPEC extern bool ompi_mpi_spc_dump_enabled;
-
-/**
- * A boolean value that determines whether or not to dump the SPC counter
- * values in an mmap'd file during execution.  A value of true dumps the
- * counters and false does not.
- */
-OMPI_DECLSPEC extern bool ompi_mpi_spc_mmap_enabled;
-
-/**
- * An integer value that denotes the time period between snapshots with the
- * SPC mmap interface.
- */
-OMPI_DECLSPEC extern int ompi_mpi_spc_snapshot_period;
-
-/**
- * An integer value that denotes the boundary at which a message is qualified
- * as a small/large message for the point to point message counter.
- */
-OMPI_DECLSPEC extern int ompi_mpi_spc_p2p_message_boundary;
-
-/**
- * An integer value that denotes the boundary at which a message is qualified
- * as a small/large message for collective bin counters.
- */
-OMPI_DECLSPEC extern int ompi_mpi_spc_collective_message_boundary;
-
-/**
- * An integer value that denotes the boundary at which a communicator is qualified
- * as a small/large communicator for collective bin counters.
- */
-OMPI_DECLSPEC extern int ompi_mpi_spc_collective_comm_boundary;
-
 
 /**
  * Register MCA parameters used by the MPI layer.

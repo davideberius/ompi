@@ -80,13 +80,14 @@ do {                                                                    \
         macro_segments[0].seg_addr.pval = frag->addr;                   \
     } else {                                                            \
         buffers[0].len = _size;                                         \
+        SPC_UPDATE_WATERMARK(OMPI_SPC_MAX_QUEUE_ALLOCATION,             \
+                             OMPI_SPC_QUEUE_ALLOCATION, _size);         \
         buffers[0].addr = (char*)                                       \
             mca_pml_ob1.allocator->alc_alloc( mca_pml_ob1.allocator,    \
                                               buffers[0].len,           \
                                               0);                       \
         _ptr = (unsigned char*)(buffers[0].addr);                       \
         macro_segments[0].seg_addr.pval = buffers[0].addr;              \
-        SPC_RECORD(OMPI_SPC_QUEUE_ALLOCATION, buffers[0].len);          \
     }                                                                   \
     macro_segments[0].seg_len = _size;                                  \
     for( i = 0; i < cnt; i++ ) {                                        \

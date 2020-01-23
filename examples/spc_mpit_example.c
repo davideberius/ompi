@@ -22,16 +22,33 @@ void message_exchange(int num_messages, int message_size)
     /* Use calloc to initialize data to 0's */
     char *data = (char*)calloc(message_size, sizeof(char));
     MPI_Status status;
+    MPI_Request req;
 
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
+    /* This is designed to have at least num_messages unexpected messages in order to
+     * hit the unexpected message queue counters.  The broadcasts are here to showcase
+     * the collective bin counters and the P2P and Eager message counters.
+     */
     if(rank == 0) {
-        for(i = 0; i < num_messages; i++)
-            MPI_Send(data, message_size, MPI_BYTE, 1, 123, MPI_COMM_WORLD);
+        for(i = 0; i < num_messages; i++) {
+            MPI_Isend(data, message_size, MPI_BYTE, 1, 123, MPI_COMM_WORLD, &req);
+        }
+        MPI_Send(data, message_size, MPI_BYTE, 1, 321, MPI_COMM_WORLD);
+        for(i = 0; i < num_messages; i++) {
+            MPI_Bcast(data, message_size, MPI_BYTE, 0, MPI_COMM_WORLD);
+        }
     } else if(rank == 1) {
-        for(i = 0; i < num_messages; i++)
+        MPI_Recv(data, message_size, MPI_BYTE, 0, 321, MPI_COMM_WORLD, &status);
+        for(i = 0; i < num_messages; i++) {
             MPI_Recv(data, message_size, MPI_BYTE, 0, 123, MPI_COMM_WORLD, &status);
+        }
+        for(i = 0; i < num_messages; i++) {
+            MPI_Bcast(data, message_size, MPI_BYTE, 0, MPI_COMM_WORLD);
+        }
     }
+    /* This should use the binomial algorithm so it has at least one counter value */
+    MPI_Bcast(data, 1, MPI_BYTE, 0, MPI_COMM_WORLD);
 
     free(data);
 }
@@ -46,16 +63,20 @@ int main(int argc, char **argv)
     } else {
         num_messages = atoi(argv[1]);
         message_size = atoi(argv[2]);
+        if(message_size <= 0) {
+            printf("Message size must be positive.\n");
+            return -1;
+        }
     }
 
-    int i, rank, size, provided, num, name_len, desc_len, verbosity, bind, var_class, readonly, continuous, atomic, count, index, xml_index;
+    int i, j, rank, size, provided, num, name_len, desc_len, verbosity, bind, var_class, readonly, continuous, atomic, count, index, xml_index;
     MPI_Datatype datatype;
     MPI_T_enum enumtype;
     MPI_Comm comm;
     char name[256], description[256];
 
     /* Counter names to be read by ranks 0 and 1 */
-    char *counter_names[] = {"runtime_spc_OMPI_SPC_BYTES_SENT_USER",
+    char *counter_names[] = {"runtime_spc_OMPI_SPC_BASE_BCAST_BINOMIAL",
                              "runtime_spc_OMPI_SPC_BYTES_RECEIVED_USER" };
     char *xml_counter = "runtime_spc_OMPI_SPC_XML_FILE";
 
@@ -69,7 +90,26 @@ int main(int argc, char **argv)
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    /* Determine the MPI_T pvar indices for the OMPI_BYTES_SENT/RECIEVED_USER SPCs */
+    if(rank == 0) {
+        printf("##################################################################\n");
+        printf("This test is designed to highlight several different SPC counters.\n");
+        printf("The MPI workload of this test will use 1 MPI_Send and %d MPI_Isend\n", num_messages);
+        printf("operation(s) on the sender side (rank 0) and %d MPI_Recv operation(s)\n", num_messages+1);
+        printf("on the receiver side (rank 1) in such a way that at least %d message(s)\n", num_messages);
+        printf("are unexpected.  This highlights the unexpected message queue SPCs.\n");
+        printf("There will also be %d MPI_Bcast operation(s) with one of them being of\n", num_messages+1);
+        printf("size 1 byte, and %d being of size %d byte(s).  The 1 byte MPI_Bcast is\n", num_messages, message_size);
+        printf("meant to ensure that there is at least one MPI_Bcast that uses the\n");
+        printf("binomial algorithm so the MPI_T pvar isn't all 0's.  The addition of\n");
+        printf("the broadcasts also has the effect of showcasing the P2P message size,\n");
+        printf("eager vs not eager message, and bytes sent by the user vs MPI SPCs.\n");
+        printf("Be sure to set the mpi_spc_dump_enabled MCA parameter to true in order\n");
+        printf("to see all of the tracked SPCs.\n");
+        printf("##################################################################\n\n");
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    /* Determine the MPI_T pvar indices for the requested SPCs */
     index = xml_index = -1;
     MPI_T_pvar_get_num(&num);
     for(i = 0; i < num; i++) {
@@ -80,13 +120,13 @@ int main(int argc, char **argv)
         if( MPI_SUCCESS != rc )
             continue;
 
+        if(strcmp(name, xml_counter) == 0) {
+            xml_index = i;
+            printf("[%d] %s -> %s\n", rank, name, description);
+        }
         if(strcmp(name, counter_names[rank]) == 0) {
             index = i;
             printf("[%d] %s -> %s\n", rank, name, description);
-        }
-        if(strcmp(name, xml_counter) == 0) {
-            xml_index = i;
-            printf("[%d] %s -> %s (index -> %d)\n", rank, name, description, xml_index);
         }
     }
 
@@ -97,9 +137,8 @@ int main(int argc, char **argv)
     }
 
     int ret, xml_count;
-    long long value;
-    char *xml_filename = (char*)malloc(64 * sizeof(char));
-    sprintf(xml_filename, "this_is_a_test");
+    long long *values = NULL;
+    char *xml_filename = (char*)malloc(128 * sizeof(char));
 
     MPI_T_pvar_session session;
     MPI_T_pvar_handle handle;
@@ -108,28 +147,36 @@ int main(int argc, char **argv)
     ret = MPI_T_pvar_handle_alloc(session, index, NULL, &handle, &count);
     ret = MPI_T_pvar_start(session, handle);
 
+    values = (long long*)malloc(count * sizeof(long long));
+
     MPI_T_pvar_session xml_session;
     MPI_T_pvar_handle xml_handle;
     if(xml_index >= 0) {
         ret = MPI_T_pvar_session_create(&xml_session);
         ret = MPI_T_pvar_handle_alloc(xml_session, xml_index, NULL, &xml_handle, &xml_count);
-        printf("xml_count: %d\n", xml_count);
         ret = MPI_T_pvar_start(xml_session, xml_handle);
     }
 
+    double timer = MPI_Wtime();
     message_exchange(num_messages, message_size);
+    timer = MPI_Wtime() - timer;
 
-    ret = MPI_T_pvar_read(session, handle, &value);
+    printf("[%d] Elapsed time: %lf seconds\n", rank, timer);
+
+    ret = MPI_T_pvar_read(session, handle, values);
     if(xml_index >= 0) {
         ret = MPI_T_pvar_read(xml_session, xml_handle, &xml_filename);
     }
 
     /* Print the counter values in order by rank */
     for(i = 0; i < 2; i++) {
+        printf("\n");
         if(i == rank) {
-            printf("[%d] Value Read: %lld\n", rank, value);
             if(xml_index >= 0) {
-                printf("[%d] Value Read: %s\n", rank, xml_filename);
+                printf("[%d] XML Counter Value Read: %s\n", rank, xml_filename);
+            }
+            for(j = 0; j < count; j++) {
+                printf("[%d] %s Counter Value Read: %lld\n", rank, counter_names[rank], values[j]);
             }
             fflush(stdout);
         }
