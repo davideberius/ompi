@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 The University of Tennessee and The University
+ * Copyright (c) 2018-2020 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  *
@@ -1109,7 +1109,6 @@ void ompi_spc_fini(void)
     int fd, rc;
     char sm_file[SPC_MAX_FILENAME];
     char *shm_dir = SPC_SHM_DIR;
-    orte_proc_t *pptr;
 
     int rank = ompi_comm_rank(ompi_spc_comm);
 

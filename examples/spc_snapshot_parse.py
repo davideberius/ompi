@@ -1,5 +1,12 @@
 #!/usr/bin/python
 
+# Copyright (c) 2020      The University of Tennessee and The University
+#                         of Tennessee Research Foundation.  All rights
+#                         reserved.
+#
+# Simple example usage of SPC snapshots that creates a heatmap of
+# SPC usage over time.
+
 import sys
 import glob
 import operator

@@ -51,4 +51,3 @@ libompi_mpir_la_SOURCES = \
 libompi_mpir_la_CFLAGS = $(MPIR_UNWIND_CFLAGS)
 
 lib@OMPI_LIBMPI_NAME@_la_LIBADD += libompi_mpir.la
-

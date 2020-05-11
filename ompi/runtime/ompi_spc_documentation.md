@@ -8,7 +8,6 @@ By default, Open MPI does not build with SPCs enabled, so all of the instrumenta
 - mpi_spc_dump_enabled: A boolean parameter denoted by a 'true' or 'false' string that determines whether or not to print the counter values to stdout during MPI_Finalize.  The default value is 'false'
 - mpi_spc_mmap_enabled: A boolean parameter denoted by a 'true' or 'false' string that determines whether or not to use the mmap interface for storing the SPC data.  The default value is 'false'
 - mpi_spc_xml_string: A string that is appended to the XML file created by the mmap interface for easy identification.  For example, if this variable is set to the value of 'test', the resultant XML filename would be spc_data.[nodename].test.[world rank].xml.  By default this string is empty, which results in the 'test' value being replaced by the Open MPI jobid.
-- orte_spc_snapshot_period: A floating point value denoting the amount of time in seconds after which to create a snapshot of the SPC values using the snapshot feature within the mmap interface.  Any negative value will mean no snapshots will be taken.  The default value is -1.
 - mpi_spc_p2p_message boundary: An integer value denoting the point after which messages are determined to be 'large' messages within OMPI_SPC_P2P_MESSAGE_SIZE bin counter.  The default value is 12288.
 - mpi_spc_collective_message_boundary: An integer value denoting the point after which messages are determined to be 'large' messages for collective bin counters.  The default value is 12288.
 - mpi_spc_collective_comm_boundary: An integer value denoting the point after which a communicator is determined to be 'large' for collective bin counters.  The default value is 64.
@@ -33,7 +32,7 @@ The following is a simple example C program that will show how these counters co
 
 ```c
 /*
- * Copyright (c) 2020      The University of Tennessee and The University
+ * Copyright (c) 2018-2020 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  *
@@ -89,7 +88,7 @@ void message_exchange(int num_messages, int message_size)
 
 int main(int argc, char **argv)
 {
-    int num_messages, message_size;
+    int num_messages, message_size, rc;
 
     if(argc < 3) {
         printf("Usage: mpirun -np 2 --mca mpi_spc_attach all --mca mpi_spc_dump_enabled true ./spc_example [num_messages] [message_size]\n");
@@ -148,9 +147,11 @@ int main(int argc, char **argv)
     MPI_T_pvar_get_num(&num);
     for(i = 0; i < num; i++) {
         name_len = desc_len = 256;
-        PMPI_T_pvar_get_info(i, name, &name_len, &verbosity,
-                             &var_class, &datatype, &enumtype, description, &desc_len, &bind,
-                             &readonly, &continuous, &atomic);
+        rc = PMPI_T_pvar_get_info(i, name, &name_len, &verbosity,
+                                  &var_class, &datatype, &enumtype, description, &desc_len, &bind,
+                                  &readonly, &continuous, &atomic);
+        if( MPI_SUCCESS != rc )
+            continue;
 
         if(strcmp(name, xml_counter) == 0) {
             xml_index = i;
@@ -484,7 +485,8 @@ int main(int argc, char **argv)
 ```
 
 #### Snapshot Feature in the mmap Interface
-The mmap interface also allows for collecting snapshots of the SPC counter values periodically throughout an execution through a built-in snapshot feature.  These snapshots use the 'orte_spc_snapshot_period' MCA parameter to determine the length of time after which to create a copy of the SPC data file from the mmap interface.  The snapshot data file copies simply append a timestamp to the end of the mmap data file to keep track of when that snapshot was taken.  These snapshot files can be used to show how counter values change over time.
+NOTE: This feature is currently in the process of being moved to an external tool, and will be unavailable until then.
+The mmap interface also allows for collecting snapshots of the SPC counter values periodically throughout an execution through a snapshot feature.  These snapshots use an MCA parameter to determine the length of time after which to create a copy of the SPC data file from the mmap interface.  The snapshot data file copies simply append a timestamp to the end of the mmap data file to keep track of when that snapshot was taken.  These snapshot files can be used to show how counter values change over time.
 
 The following is an example python script that takes the values from these snapshot files and creates heatmaps of the change in the counter values over time.  This example script takes three command line arguments: a directory where all of the snapshot, XML, and original data files are stored; the XML string or Open MPI jobid to identify these data and XML files; a comma-separated list of SPCs to be used in creating the heatmaps.
 

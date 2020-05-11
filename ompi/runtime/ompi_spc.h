@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019      The University of Tennessee and The University
+ * Copyright (c) 2018-2020 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  * Copyright (c) 2018      Research Organization for Information Science
@@ -34,7 +34,6 @@
 #include "opal/util/show_help.h"
 #include "opal/util/output.h"
 #include "opal/mca/shmem/base/base.h"
-#include "opal/mca/pmix/pmix.h"
 #include "opal/util/sys_limits.h"
 
 #define SPC_CACHE_LINE opal_cache_line_size /* The number of bytes in a cache line. */
